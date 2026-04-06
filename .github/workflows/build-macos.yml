@@ -2,7 +2,7 @@ name: Build macOS Binary
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "dev" ]
   workflow_dispatch:
 
 jobs:
