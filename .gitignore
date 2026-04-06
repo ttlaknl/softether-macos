@@ -1,0 +1,11 @@
+# SoftEther VPN Build Artifacts
+vpnclient
+vpncmd
+
+# IDEs
+.vscode/
+.idea/
+
+# OS-specific
+.DS_Store
+Thumbs.db

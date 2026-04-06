@@ -1,0 +1,44 @@
+name: Build macOS Binary
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set permissions
+      run: |
+        chmod +x .install.sh
+        # Ensure 'lib' and 'code' directories have read permissions
+        chmod -R 755 lib code
+
+    - name: Build with Make
+      run: |
+        # Use 'make main' directly to avoid interactive prompts if any in .install.sh
+        make main
+
+    - name: Check build artifacts
+      run: |
+        ls -l vpnclient vpncmd
+        if [ ! -f vpnclient ] || [ ! -f vpncmd ]; then
+          echo "Error: Binaries were not generated properly."
+          exit 1
+        fi
+
+    - name: Upload binaries
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-vpn-binaries
+        path: |
+          vpnclient
+          vpncmd
+          hamcore.se2
+          ReadMeFirst_Important_Notices_cn.txt
+          ReadMeFirst_License.txt
