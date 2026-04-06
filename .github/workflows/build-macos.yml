@@ -34,36 +34,18 @@ jobs:
 
     - name: Create macOS App Bundle Structure
       run: |
-        # 1. Create directory structure
         mkdir -p SoftEtherVPN.app/Contents/MacOS
         mkdir -p SoftEtherVPN.app/Contents/Resources
-
-        # 2. Copy binaries and resources
         cp build/vpnclient SoftEtherVPN.app/Contents/MacOS/
         cp build/vpncmd SoftEtherVPN.app/Contents/MacOS/
-        cp build/hamcore.se2 SoftEtherVPN.app/Contents/MacOS/ # VPN client looks for this in the same dir
-
-        # 3. Create Launcher Script
-        # This script handles the sudo requirement via AppleScript
-        cat << 'EOF' > SoftEtherVPN.app/Contents/MacOS/SoftEtherVPNLauncher
-#!/bin/bash
-DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$DIR"
-
-# Launch vpnclient start with admin rights
-osascript -e "do shell script \"'$DIR/vpnclient' start\" with administrator privileges"
-
-# Open terminal for vpncmd configuration
-osascript -e 'tell application "Terminal" to do script "'"$DIR/vpncmd"'"'
-
-# Notify user
-osascript -e 'display notification "SoftEther VPN Client Service Started (Native ARM64)" with title "SoftEther VPN"'
-EOF
+        cp build/hamcore.se2 SoftEtherVPN.app/Contents/MacOS/
+        
+        # Create Launcher Script with correct indentation
+        printf "#!/bin/bash\nDIR=\"\$(cd \"\$(dirname \"\$0\")\" && pwd)\"\ncd \"\$DIR\"\nosascript -e \"do shell script \\\"'\$DIR/vpnclient' start\\\" with administrator privileges\"\nosascript -e 'tell application \"Terminal\" to do script \"'\"\$DIR/vpncmd\"'\"'\nosascript -e 'display notification \"SoftEther VPN Client Service Started (Native ARM64)\" with title \"SoftEther VPN\"'\n" > SoftEtherVPN.app/Contents/MacOS/SoftEtherVPNLauncher
+        
         chmod +x SoftEtherVPN.app/Contents/MacOS/SoftEtherVPNLauncher
         chmod +x SoftEtherVPN.app/Contents/MacOS/vpnclient
         chmod +x SoftEtherVPN.app/Contents/MacOS/vpncmd
-
-        # 4. Copy Info.plist
         cp local_config/.github/workflows/Info.plist SoftEtherVPN.app/Contents/Info.plist
 
     - name: Verify App Structure
