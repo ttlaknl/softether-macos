@@ -1,0 +1,2 @@
+# softether-macos
+softether,macos
