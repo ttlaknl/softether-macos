@@ -1,4 +1,4 @@
-name: Build macOS Binary (Native ARM64)
+name: Build macOS App Bundle (ARM64 Native)
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest  # Now it's ARM64 (Apple Silicon)
+    runs-on: macos-latest
 
     steps:
     - name: Checkout SoftEtherVPN Official Source
@@ -17,6 +17,11 @@ jobs:
         submodules: recursive
         fetch-depth: 1
 
+    - name: Checkout Local Config (Info.plist)
+      uses: actions/checkout@v4
+      with:
+        path: local_config
+
     - name: Install dependencies
       run: |
         brew update
@@ -24,24 +29,54 @@ jobs:
 
     - name: Configure and Build
       run: |
-        # Use the provided configure script which calls CMake
         ./configure
         make -C build
 
-    - name: Check build artifacts
+    - name: Create macOS App Bundle Structure
       run: |
-        ls -l build/vpnclient build/vpncmd build/hamcore.se2
-        file build/vpnclient
-        if [ ! -f build/vpnclient ] || [ ! -f build/vpncmd ]; then
-          echo "Error: Binaries were not generated properly."
-          exit 1
-        fi
+        # 1. Create directory structure
+        mkdir -p SoftEtherVPN.app/Contents/MacOS
+        mkdir -p SoftEtherVPN.app/Contents/Resources
+
+        # 2. Copy binaries and resources
+        cp build/vpnclient SoftEtherVPN.app/Contents/MacOS/
+        cp build/vpncmd SoftEtherVPN.app/Contents/MacOS/
+        cp build/hamcore.se2 SoftEtherVPN.app/Contents/MacOS/ # VPN client looks for this in the same dir
+
+        # 3. Create Launcher Script
+        # This script handles the sudo requirement via AppleScript
+        cat << 'EOF' > SoftEtherVPN.app/Contents/MacOS/SoftEtherVPNLauncher
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$DIR"
+
+# Launch vpnclient start with admin rights
+osascript -e "do shell script \"'$DIR/vpnclient' start\" with administrator privileges"
+
+# Open terminal for vpncmd configuration
+osascript -e 'tell application "Terminal" to do script "'"$DIR/vpncmd"'"'
+
+# Notify user
+osascript -e 'display notification "SoftEther VPN Client Service Started (Native ARM64)" with title "SoftEther VPN"'
+EOF
+        chmod +x SoftEtherVPN.app/Contents/MacOS/SoftEtherVPNLauncher
+        chmod +x SoftEtherVPN.app/Contents/MacOS/vpnclient
+        chmod +x SoftEtherVPN.app/Contents/MacOS/vpncmd
+
+        # 4. Copy Info.plist
+        cp local_config/.github/workflows/Info.plist SoftEtherVPN.app/Contents/Info.plist
+
+    - name: Verify App Structure
+      run: |
+        ls -R SoftEtherVPN.app
+        file SoftEtherVPN.app/Contents/MacOS/vpnclient
+
+    - name: Package App Bundle
+      run: |
+        zip -r SoftEtherVPN_ARM64.app.zip SoftEtherVPN.app
 
     - name: Upload binaries
       uses: actions/upload-artifact@v4
       with:
-        name: macos-vpn-arm64-native
-        path: |
-          build/vpnclient
-          build/vpncmd
-          build/hamcore.se2
+        name: SoftEtherVPN_ARM64_App
+        path: SoftEtherVPN_ARM64.app.zip
