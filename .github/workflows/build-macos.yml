@@ -1,33 +1,38 @@
-name: Build macOS Binary
+name: Build macOS Binary (Native ARM64)
 
 on:
   push:
-    branches: [ "main", "master", "dev" ]
+    branches: [ "main", "dev" ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-latest  # Now it's ARM64 (Apple Silicon)
 
     steps:
-    - name: Checkout repository
+    - name: Checkout SoftEtherVPN Official Source
       uses: actions/checkout@v4
+      with:
+        repository: SoftEtherVPN/SoftEtherVPN
+        submodules: recursive
+        fetch-depth: 1
 
-    - name: Set permissions
+    - name: Install dependencies
       run: |
-        chmod +x .install.sh
-        # Ensure 'lib' and 'code' directories have read permissions
-        chmod -R 755 lib code
+        brew update
+        brew install cmake openssl libsodium readline ncurses
 
-    - name: Build with Make
+    - name: Configure and Build
       run: |
-        # Use 'make main' directly to avoid interactive prompts if any in .install.sh
-        make main
+        # Use the provided configure script which calls CMake
+        ./configure
+        make -C build
 
     - name: Check build artifacts
       run: |
-        ls -l vpnclient vpncmd
-        if [ ! -f vpnclient ] || [ ! -f vpncmd ]; then
+        ls -l build/vpnclient build/vpncmd build/hamcore.se2
+        file build/vpnclient
+        if [ ! -f build/vpnclient ] || [ ! -f build/vpncmd ]; then
           echo "Error: Binaries were not generated properly."
           exit 1
         fi
@@ -35,10 +40,8 @@ jobs:
     - name: Upload binaries
       uses: actions/upload-artifact@v4
       with:
-        name: macos-vpn-binaries
+        name: macos-vpn-arm64-native
         path: |
-          vpnclient
-          vpncmd
-          hamcore.se2
-          ReadMeFirst_Important_Notices_cn.txt
-          ReadMeFirst_License.txt
+          build/vpnclient
+          build/vpncmd
+          build/hamcore.se2
