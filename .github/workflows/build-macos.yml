@@ -1,0 +1,64 @@
+name: Build macOS App Bundle (ARM64 Native)
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout SoftEtherVPN Official Source
+      uses: actions/checkout@v4
+      with:
+        repository: SoftEtherVPN/SoftEtherVPN
+        submodules: recursive
+        fetch-depth: 1
+
+    - name: Checkout Local Config (Info.plist)
+      uses: actions/checkout@v4
+      with:
+        path: local_config
+
+    - name: Install dependencies
+      run: |
+        brew update
+        brew install cmake openssl libsodium readline ncurses
+
+    - name: Configure and Build
+      run: |
+        ./configure
+        make -C build
+
+    - name: Create macOS App Bundle Structure
+      run: |
+        mkdir -p SoftEtherVPN.app/Contents/MacOS
+        mkdir -p SoftEtherVPN.app/Contents/Resources
+        cp build/vpnclient SoftEtherVPN.app/Contents/MacOS/
+        cp build/vpncmd SoftEtherVPN.app/Contents/MacOS/
+        cp build/hamcore.se2 SoftEtherVPN.app/Contents/MacOS/
+        
+        # Create Launcher Script with correct indentation
+        printf "#!/bin/bash\nDIR=\"\$(cd \"\$(dirname \"\$0\")\" && pwd)\"\ncd \"\$DIR\"\nosascript -e \"do shell script \\\"'\$DIR/vpnclient' start\\\" with administrator privileges\"\nosascript -e 'tell application \"Terminal\" to do script \"'\"\$DIR/vpncmd\"'\"'\nosascript -e 'display notification \"SoftEther VPN Client Service Started (Native ARM64)\" with title \"SoftEther VPN\"'\n" > SoftEtherVPN.app/Contents/MacOS/SoftEtherVPNLauncher
+        
+        chmod +x SoftEtherVPN.app/Contents/MacOS/SoftEtherVPNLauncher
+        chmod +x SoftEtherVPN.app/Contents/MacOS/vpnclient
+        chmod +x SoftEtherVPN.app/Contents/MacOS/vpncmd
+        cp local_config/.github/workflows/Info.plist SoftEtherVPN.app/Contents/Info.plist
+
+    - name: Verify App Structure
+      run: |
+        ls -R SoftEtherVPN.app
+        file SoftEtherVPN.app/Contents/MacOS/vpnclient
+
+    - name: Package App Bundle
+      run: |
+        zip -r SoftEtherVPN_ARM64.app.zip SoftEtherVPN.app
+
+    - name: Upload binaries
+      uses: actions/upload-artifact@v4
+      with:
+        name: SoftEtherVPN_ARM64_App
+        path: SoftEtherVPN_ARM64.app.zip
