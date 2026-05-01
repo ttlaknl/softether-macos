@@ -7,7 +7,7 @@
 CC=gcc
 
 
-OPTIONS=-fPIE -O2 -fsigned-char -m64 -lm -lpcap -lpthread -L./ lib/libssl.a lib/libcrypto.a lib/libiconv.a lib/libcharset.a lib/libedit.a lib/libncurses.a lib/libz.a
+OPTIONS=-arch x86_64 -fPIE -O2 -fsigned-char -m64 -lm -lpcap -lpthread -L./ lib/libssl.a lib/libcrypto.a lib/libiconv.a lib/libcharset.a lib/libedit.a lib/libncurses.a lib/libz.a
 
 default:
 	@./.install.sh
@@ -82,7 +82,12 @@ main:
 	@echo "--------------------------------------------------------------------"
 	@echo
 
+ui:
+	@chmod +x build_ui.sh
+	@./build_ui.sh
+
 clean:
 	rm -f vpnclient
 	rm -f vpncmd
+	rm -rf SoftEtherUI.app
 
