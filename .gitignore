@@ -9,3 +9,15 @@ vpncmd
 # OS-specific
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+
+# Local runtime logs and dumps
+err.txt
+log.txt
+log*.txt
+
+# App bundle build output
+SoftEtherUI.app/

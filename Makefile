@@ -2,33 +2,30 @@
 # Makefile
 # 
 # Copyright (c) SoftEther VPN Project at University of Tsukuba, Japan. All Rights Reserved.
-# Platform: macos-x86-64bit
+# Platform: macos-arm64 (Apple Silicon M-Series)
 
 CC=gcc
 
-
-OPTIONS=-arch x86_64 -fPIE -O2 -fsigned-char -m64 -lm -lpcap -lpthread -L./ lib/libssl.a lib/libcrypto.a lib/libiconv.a lib/libcharset.a lib/libedit.a lib/libncurses.a lib/libz.a
+OPTIONS=-arch arm64 -fPIE -O2 -fsigned-char -lm -lpcap -lpthread -liconv -lz -L./lib lib/libssl.a lib/libcrypto.a lib/libedit.a lib/libncurses.a
 
 default:
 	@./.install.sh
+
+core:
+	@chmod +x compile_softether_core_arm64.sh
+	@./compile_softether_core_arm64.sh
 
 # NOTE:
 # You have to read and agree the license agreement at the same directory
 #  before using this software.
 
 main:
-	@echo "Preparing SoftEther VPN Client..."
-	-ranlib lib/libcharset.a
-	-ranlib lib/libcrypto.a
-	-ranlib lib/libedit.a
-	-ranlib lib/libiconv.a
-	-ranlib lib/libncurses.a
-	-ranlib lib/libpcap.a
-	-ranlib lib/libssl.a
-	-ranlib lib/libz.a
-	-ranlib code/vpnclient.a
+	@echo "Preparing SoftEther VPN Client for Apple Silicon (arm64)..."
+	-ranlib lib/libcrypto.a 2>/dev/null || true
+	-ranlib lib/libssl.a 2>/dev/null || true
+	-ranlib code/vpnclient.a 2>/dev/null || true
 	$(CC) code/vpnclient.a $(OPTIONS) -o vpnclient
-	-ranlib code/vpncmd.a
+	-ranlib code/vpncmd.a 2>/dev/null || true
 	$(CC) code/vpncmd.a $(OPTIONS) -o vpncmd
 	@echo
 	@echo "--------------------------------------------------------------------"
