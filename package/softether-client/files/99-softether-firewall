@@ -1,0 +1,21 @@
+#!/bin/sh
+# Auto-configure firewall zone and LAN-to-VPN forwarding for SoftEther VPN client
+
+if ! uci -q get firewall.softether_zone >/dev/null 2>&1; then
+	uci set firewall.softether_zone=zone
+	uci set firewall.softether_zone.name='softether'
+	uci set firewall.softether_zone.input='ACCEPT'
+	uci set firewall.softether_zone.output='ACCEPT'
+	uci set firewall.softether_zone.forward='ACCEPT'
+	uci set firewall.softether_zone.masq='1'
+	uci set firewall.softether_zone.mtu_fix='1'
+	uci add_list firewall.softether_zone.device='vpn_vpn0'
+
+	uci set firewall.softether_forward=forwarding
+	uci set firewall.softether_forward.src='lan'
+	uci set firewall.softether_forward.dest='softether'
+	uci commit firewall
+	/etc/init.d/firewall reload >/dev/null 2>&1 || true
+fi
+
+exit 0

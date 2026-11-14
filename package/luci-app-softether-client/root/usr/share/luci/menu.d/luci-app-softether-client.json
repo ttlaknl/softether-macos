@@ -1,0 +1,55 @@
+{
+	"admin/vpn/softether": {
+		"title": "SoftEther 客户端",
+		"order": 50,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-app-softether-client" ]
+		}
+	},
+	"admin/services/softether": {
+		"title": "SoftEther 客户端",
+		"order": 50,
+		"action": {
+			"type": "alias",
+			"path": "admin/vpn/softether/status"
+		},
+		"depends": {
+			"acl": [ "luci-app-softether-client" ]
+		}
+	},
+	"admin/vpn/softether/status": {
+		"title": "状态总览",
+		"order": 1,
+		"action": {
+			"type": "view",
+			"path": "softether-client/overview"
+		}
+	},
+	"admin/vpn/softether/settings": {
+		"title": "参数设置",
+		"order": 2,
+		"action": {
+			"type": "view",
+			"path": "softether-client/settings"
+		}
+	},
+	"admin/vpn/softether/routing": {
+		"title": "路由策略",
+		"order": 3,
+		"action": {
+			"type": "view",
+			"path": "softether-client/routing"
+		}
+	},
+	"admin/vpn/softether/log": {
+		"title": "日志与诊断",
+		"order": 4,
+		"action": {
+			"type": "view",
+			"path": "softether-client/log"
+		}
+	}
+}

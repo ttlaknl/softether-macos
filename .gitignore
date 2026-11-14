@@ -1,0 +1,14 @@
+# OpenWrt Build Artifacts & Source Tarballs
+bin/
+dl/
+build_dir/
+staging_dir/
+*.ipk
+
+# Python
+__pycache__/
+*.pyc
+
+# OS-specific
+.DS_Store
+Thumbs.db

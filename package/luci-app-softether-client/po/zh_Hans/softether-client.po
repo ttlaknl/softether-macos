@@ -1,0 +1,176 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "SoftEther VPN"
+msgstr "SoftEther 客户端"
+
+msgid "Overview"
+msgstr "状态总览"
+
+msgid "Settings"
+msgstr "参数设置"
+
+msgid "Routing"
+msgstr "路由策略"
+
+msgid "Log & Tools"
+msgstr "日志与诊断"
+
+msgid "SoftEther VPN Client - Status Overview"
+msgstr "SoftEther VPN 客户端 - 运行状态总览"
+
+msgid "Monitor active SoftEther VPN connection, tunnel status, and virtual network adapter details."
+msgstr "实时监控 SoftEther VPN 客户端运行状态、隧道连接情况及虚拟网卡收发流量。"
+
+msgid "Client Daemon:"
+msgstr "客户端守护进程："
+
+msgid "RUNNING (PID: %s)"
+msgstr "运行中 (PID: %s)"
+
+msgid "STOPPED"
+msgstr "已停止"
+
+msgid "Tunnel Connection Status:"
+msgstr "隧道连接状态："
+
+msgid "Connected"
+msgstr "已连接"
+
+msgid "Connecting..."
+msgstr "正在连接..."
+
+msgid "Disconnected"
+msgstr "未连接"
+
+msgid "Virtual Network Device:"
+msgstr "虚拟网络接口："
+
+msgid "Assigned VPN IP Address:"
+msgstr "分配的 VPN IP 地址："
+
+msgid "No IP Assigned"
+msgstr "尚未分配 IP"
+
+msgid "VPN Server Address:"
+msgstr "远程服务器地址："
+
+msgid "Active Session Name:"
+msgstr "当前活动会话："
+
+msgid "Traffic Statistics:"
+msgstr "网络收发统计："
+
+msgid "Connect VPN"
+msgstr "连接 VPN"
+
+msgid "Disconnect VPN"
+msgstr "断开连接"
+
+msgid "Restart Service"
+msgstr "重启服务"
+
+msgid "SoftEther VPN Client Settings"
+msgstr "SoftEther VPN 客户端参数配置"
+
+msgid "Configure daemon service parameters, connection credentials, and performance optimizations."
+msgstr "配置客户端服务运行参数、VPN 服务器账户凭据以及并发连接性能加速。"
+
+msgid "General Settings"
+msgstr "基本设置"
+
+msgid "Enable Client Service"
+msgstr "启用客户端服务"
+
+msgid "Virtual Adapter Name"
+msgstr "虚拟网卡名称"
+
+msgid "Connection Watchdog"
+msgstr "断线看门狗保活"
+
+msgid "Watchdog Ping Target"
+msgstr "看门狗 Ping 检测目标"
+
+msgid "Connection Account"
+msgstr "连接账户设置"
+
+msgid "Account Name"
+msgstr "账户别名"
+
+msgid "VPN Server Address / Host"
+msgstr "VPN 服务器地址 / 域名"
+
+msgid "Server Port"
+msgstr "服务器端口"
+
+msgid "Virtual Hub Name"
+msgstr "虚拟 Hub 名称"
+
+msgid "Authentication Method"
+msgstr "身份验证方式"
+
+msgid "Standard Password"
+msgstr "标准密码认证"
+
+msgid "RADIUS / NT Domain"
+msgstr "RADIUS / 外部认证"
+
+msgid "Username"
+msgstr "用户名"
+
+msgid "Password"
+msgstr "密码"
+
+msgid "Concurrent TCP Streams (Multi-TCP Acceleration)"
+msgstr "并发 TCP 连接数 (Multi-TCP 加速)"
+
+msgid "SSL Data Encryption"
+msgstr "SSL 数据传输加密"
+
+msgid "Data Compression"
+msgstr "数据包压缩"
+
+msgid "Half-Duplex Mode"
+msgstr "半双工模式"
+
+msgid "Reconnect Interval (seconds)"
+msgstr "重连等待间隔 (秒)"
+
+msgid "Routing & Traffic Policy"
+msgstr "路由规则与流量策略"
+
+msgid "Routing Mode"
+msgstr "路由分流模式"
+
+msgid "Global VPN (Route all Internet traffic through VPN)"
+msgstr "全局 VPN (所有上网流量均通过 VPN 转发)"
+
+msgid "Split Tunneling (Route specified subnets only)"
+msgstr "规则分流 (仅指定内网网段走 VPN)"
+
+msgid "Interface Only (Manual routing / MWAN3 policy)"
+msgstr "仅创建接口 (不自动添加系统路由，由用户或 MWAN3 手动管理)"
+
+msgid "Split Tunneling Target Subnets"
+msgstr "分流目标网段列表 (CIDR 格式)"
+
+msgid "Enable NAT Masquerade"
+msgstr "启用 NAT 地址伪装 (MASQUERADE)"
+
+msgid "Default Route Metric"
+msgstr "默认路由跃点数 (Metric)"
+
+msgid "DNS Resolution Policy"
+msgstr "DNS 解析策略"
+
+msgid "SoftEther VPN Client - Logs & Diagnostics"
+msgstr "SoftEther VPN 客户端 - 运行日志与诊断"
+
+msgid "Interactive vpncmd Command Console"
+msgstr "交互式 vpncmd 诊断控制台"
+
+msgid "Execute Command"
+msgstr "执行指令"
+
+msgid "Refresh Log"
+msgstr "刷新日志"

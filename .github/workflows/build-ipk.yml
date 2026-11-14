@@ -1,0 +1,58 @@
+name: Build OpenWrt SoftEther IPKs
+
+on:
+  push:
+    branches:
+      - OpenWrt
+  pull_request:
+    branches:
+      - OpenWrt
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }} IPK
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86-64
+            ver: "23.05.3"
+          - arch: aarch64
+            target: armvirt-64
+            ver: "23.05.3"
+          - arch: arm_cortex-a7
+            target: armvirt-32
+            ver: "23.05.3"
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build with Official OpenWrt SDK Container
+        run: |
+          mkdir -p bin/${{ matrix.arch }}
+          docker run --rm \
+            -v "${{ github.workspace }}/package:/builder/package/custom:ro" \
+            -v "${{ github.workspace }}/bin/${{ matrix.arch }}:/builder/bin/packages:rw" \
+            openwrt/sdk:${{ matrix.target }}-v${{ matrix.ver }} \
+            bash -c "
+              set -e
+              ./scripts/feeds update -a || true
+              ./scripts/feeds install -a || true
+              make defconfig
+              echo 'CONFIG_PACKAGE_softether-client=m' >> .config
+              echo 'CONFIG_PACKAGE_luci-app-softether-client=m' >> .config
+              make defconfig
+              make package/custom/softether-client/compile V=s -j\$(nproc)
+              make package/custom/luci-app-softether-client/compile V=s
+              find bin/ -name '*softether*.ipk' -exec cp {} /builder/bin/packages/ \;
+            "
+
+      - name: Upload IPK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: softether-openwrt-${{ matrix.arch }}
+          path: bin/${{ matrix.arch }}/*.ipk

@@ -1,0 +1,19 @@
+{
+	"luci-app-softether-client": {
+		"description": "Grant UCI and execution access for SoftEther VPN Client",
+		"read": {
+			"uci": [ "softether_client" ],
+			"file": {
+				"/var/run/softether/state.json": [ "read" ],
+				"/var/log/messages": [ "read" ]
+			}
+		},
+		"write": {
+			"uci": [ "softether_client" ],
+			"file": {
+				"/usr/libexec/softether/softether-helper.sh": [ "exec" ],
+				"/etc/init.d/softether-client": [ "exec" ]
+			}
+		}
+	}
+}
