@@ -35,7 +35,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let username = config["username"] as? String ?? "vpn"
         let password = config["password"] as? String ?? "18102744"
 
-        logger.info("Connecting to SoftEther Hub %{public}@ at %{public}@:%d", hub, serverHost, serverPort)
+        logger.info("Connecting to SoftEther Hub \(hub, privacy: .public) at \(serverHost, privacy: .public):\(serverPort)")
 
         let vpnSession = SoftEtherTunnelSession(
             host: serverHost,
@@ -46,7 +46,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         )
 
         vpnSession.onLog = { [weak self] msg in
-            self?.logger.info("%{public}@", msg)
+            self?.logger.info("\(msg, privacy: .public)")
         }
 
         vpnSession.onInboundIPPacket = { [weak self] ipPacket in
@@ -60,7 +60,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             guard let self = self else { return }
             switch result {
             case .failure(let err):
-                self.logger.error("SoftEther handshake failed: %{public}@", err.localizedDescription)
+                self.logger.error("SoftEther handshake failed: \(err.localizedDescription, privacy: .public)")
                 completionHandler(err)
 
             case .success(let info):
@@ -82,7 +82,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
                 self.setTunnelNetworkSettings(networkSettings) { error in
                     if let err = error {
-                        self.logger.error("Failed to set tunnel network settings: %{public}@", err.localizedDescription)
+                        self.logger.error("Failed to set tunnel network settings: \(err.localizedDescription, privacy: .public)")
                         vpnSession.stop()
                         completionHandler(err)
                     } else {
@@ -97,7 +97,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func stopTunnel(with reason: NEProviderStopReason,
                              completionHandler: @escaping () -> Void) {
-        logger.info("PacketTunnelProvider stopping (reason: %ld)", reason.rawValue)
+        logger.info("PacketTunnelProvider stopping (reason: \(reason.rawValue))")
         isTunnelRunning = false
         session?.stop()
         session = nil

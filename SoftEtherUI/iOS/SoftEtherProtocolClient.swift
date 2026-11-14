@@ -339,7 +339,9 @@ public final class SoftEtherTunnelSession {
     public func start(completion: @escaping (Result<HandshakeResult, Error>) -> Void) {
         let tlsOptions = NWProtocolTLS.Options()
         let secOpts = tlsOptions.securityProtocolOptions
-        sec_protocol_options_set_tls_min_version(secOpts, .TLSv12)
+        // iOS 13+ API (tls_protocol_version_t). The old sec_protocol_options_set_tls_min_version
+        // with SSLProtocol is deprecated and its `.TLSv12` member no longer exists in iOS 26 SDK.
+        sec_protocol_options_set_min_tls_protocol_version(secOpts, .TLSv12)
         sec_protocol_options_set_verify_block(secOpts, { _, _, complete in
             complete(true) // SoftEther servers use self-signed certificates by default
         }, queue)
