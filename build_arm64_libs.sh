@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build Script for SoftEther VPN Core & Dependencies (arm64 Only - Apple Silicon M-Series & iOS)
-set -e
+set -euo pipefail
 
 echo "============================================================"
 echo " Building SoftEther VPN Core Libraries for ARM64 (macOS/iOS)"
@@ -39,11 +39,19 @@ for lib_file in lib/*.a; do
     fi
 done
 
-echo "[3/4] Compiling SoftEther Core for macOS (arm64)..."
-if command -v clang &> /dev/null; then
-    echo "  - Running clang with arm64 flags..."
-    clang ${CFLAGS_MACOS} -c code/vpnclient.a -o "${MACOS_LIB_DIR}/vpnclient_arm64.o" 2>/dev/null || true
-    clang ${CFLAGS_MACOS} -c code/vpncmd.a -o "${MACOS_LIB_DIR}/vpncmd_arm64.o" 2>/dev/null || true
+echo "[3/4] Repackaging SoftEther Core static libraries for macOS (arm64)..."
+if [ -f "code/vpnclient.a" ] && [ -f "code/vpncmd.a" ]; then
+    # Verify the .a files are actually arm64
+    for lib_file in code/vpnclient.a code/vpncmd.a; do
+        if lipo -info "${lib_file}" 2>/dev/null | grep -q "arm64"; then
+            echo "  - ✓ ${lib_file} is arm64"
+            cp "${lib_file}" "${MACOS_LIB_DIR}/$(basename ${lib_file})"
+        else
+            echo "  - [Warning] ${lib_file} is not arm64 architecture, skipping."
+        fi
+    done
+else
+    echo "  - [Warning] code/vpnclient.a or code/vpncmd.a not found, skipping."
 fi
 
 echo "[4/4] Creating SoftEtherCore.xcframework for Xcode integration..."

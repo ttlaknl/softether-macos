@@ -2,7 +2,7 @@
 # Makefile
 # 
 # Copyright (c) SoftEther VPN Project at University of Tsukuba, Japan. All Rights Reserved.
-# Platform: macos-arm64 (Apple Silicon M-Series)
+# Platform: macos-arm64 (Apple Silicon M-Series) & ios-arm64 (iPhone 18)
 
 CC=gcc
 
@@ -21,61 +21,17 @@ core:
 
 main:
 	@echo "Preparing SoftEther VPN Client for Apple Silicon (arm64)..."
-	-ranlib lib/libcrypto.a 2>/dev/null || true
-	-ranlib lib/libssl.a 2>/dev/null || true
+	@test -f lib/libcrypto.a && ranlib lib/libcrypto.a 2>/dev/null || true
+	@test -f lib/libssl.a && ranlib lib/libssl.a 2>/dev/null || true
+	@test -f code/vpnclient.a || { echo "[Error] code/vpnclient.a not found"; exit 1; }
 	-ranlib code/vpnclient.a 2>/dev/null || true
 	$(CC) code/vpnclient.a $(OPTIONS) -o vpnclient
+	@test -f code/vpncmd.a || { echo "[Error] code/vpncmd.a not found"; exit 1; }
 	-ranlib code/vpncmd.a 2>/dev/null || true
 	$(CC) code/vpncmd.a $(OPTIONS) -o vpncmd
 	@echo
 	@echo "--------------------------------------------------------------------"
 	@echo "The preparation of SoftEther VPN Client is completed !"
-	@echo
-	@echo
-	@echo "*** How to switch the display language of the SoftEther VPN Client Service ***"
-	@echo "SoftEther VPN Client supports the following languages:"
-	@echo "  - Japanese"
-	@echo "  - English"
-	@echo "  - Simplified Chinese"
-	@echo
-	@echo "You can choose your prefered language of SoftEther VPN Client at any time."
-	@echo "To switch the current language, open and edit the 'lang.config' file."
-	@echo
-	@echo
-	@echo "Note: the administrative password is not set on the VPN Server. Please set your own administrative password as soon as possible by vpncmd or the GUI manager."
-	@echo
-	@echo
-	@echo "*** How to start the SoftEther VPN Client Service ***"
-	@echo
-	@echo "Please execute './vpnclient start' to run the SoftEther VPN Client Background Service."
-	@echo "And please execute './vpncmd' to run the SoftEther VPN Command-Line Utility to configure SoftEther VPN Client."
-	@echo
-	@echo "Of course, you can use the VPN Server Manager GUI Application for Windows / Mac OS X on the other Windows / Mac OS X computers in order to configure the SoftEther VPN Client remotely."
-	@echo
-	@echo "*** For Windows users ***"
-	@echo "You can download the SoftEther VPN Server Manager for Windows"
-	@echo "from the http://www.softether-download.com/ web site."
-	@echo "This manager application helps you to completely and easily manage the VPN server services running in remote hosts."
-	@echo
-	@echo
-	@echo "*** For Mac OS X users ***"
-	@echo "In April 2016 we released the SoftEther VPN Server Manager for Mac OS X."
-	@echo "You can download it from the http://www.softether-download.com/ web site."
-	@echo "VPN Server Manager for Mac OS X works perfectly as same as the traditional Windows versions. It helps you to completely and easily manage the VPN server services running in remote hosts."
-	@echo
-	@echo
-	@echo
-	@echo "*** PacketiX VPN Server HTML5 Web Administration Console (NEW) ***"
-	@echo "This VPN Server / Bridge has the built-in HTML5 Web Administration Console."
-	@echo
-	@echo "After you start the server daemon, you can open the HTML5 Web Administration Console is available at"
-	@echo
-	@echo "https://127.0.0.1:5555/"
-	@echo "or"
-	@echo "https://ip_address_of_the_vpn_server:5555/"
-	@echo
-	@echo "This HTML5 page is obviously under construction, and your HTML5 development contribution is very appreciated."
-	@echo
 	@echo "--------------------------------------------------------------------"
 	@echo
 
@@ -83,8 +39,12 @@ ui:
 	@chmod +x build_ui.sh
 	@./build_ui.sh
 
+ios:
+	@chmod +x build_ios_ipa.sh
+	@./build_ios_ipa.sh
+
 clean:
 	rm -f vpnclient
 	rm -f vpncmd
 	rm -rf SoftEtherUI.app
-
+	rm -rf build_ios SoftEtherUI-iOS.ipa SoftEtherUI-iOS-Lite.ipa

@@ -9,7 +9,11 @@ echo "--------------------------------------------------------------------"
 echo
 echo
 
-cat ReadMeFirst_License.txt
+if [ -f ReadMeFirst_License.txt ]; then
+    cat ReadMeFirst_License.txt
+else
+    echo "[Warning] ReadMeFirst_License.txt not found, skipping license display."
+fi
 
 echo
 echo "--------------------------------------------------------------------"

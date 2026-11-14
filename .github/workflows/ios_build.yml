@@ -1,0 +1,33 @@
+name: iOS IPA Build (ARM64 iPhone & NetworkExtension)
+
+on:
+  push:
+    branches: [ "dev", "main" ]
+  pull_request:
+    branches: [ "dev", "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Build and Package iOS IPAs
+      run: |
+        chmod +x build_ios_ipa.sh
+        ./build_ios_ipa.sh
+
+    - name: Upload iOS IPA (Full NetworkExtension)
+      uses: actions/upload-artifact@v4
+      with:
+        name: SoftEtherUI-iOS-Full-IPA
+        path: SoftEtherUI-iOS.ipa
+
+    - name: Upload iOS IPA (Lite Universal .p12 Compatible)
+      uses: actions/upload-artifact@v4
+      with:
+        name: SoftEtherUI-iOS-Lite-IPA
+        path: SoftEtherUI-iOS-Lite.ipa

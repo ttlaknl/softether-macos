@@ -15,6 +15,8 @@ struct ServerConfigView: View {
     @State private var nodeHub = "VPNGATE"
     @State private var nodeUsername = "vpn"
     @State private var nodePassword = "vpn"
+    @State private var hostValidationError = ""
+    @State private var portValidationError = ""
     
     private let accentCyan = Color(red: 0.0, green: 0.83, blue: 1.0)
     private let accentRed = Color(red: 1.0, green: 0.35, blue: 0.35)
@@ -165,7 +167,17 @@ struct ServerConfigView: View {
             VStack(alignment: .leading, spacing: 14) {
                 inputField(title: "节点名称", placeholder: "例如: 团队测试服务器", text: $nodeName)
                 inputField(title: "服务器主机 (Host/IP)", placeholder: "154.13.4.209", text: $nodeHost)
+                if !hostValidationError.isEmpty {
+                    Text(hostValidationError)
+                        .font(.caption)
+                        .foregroundColor(accentRed)
+                }
                 inputField(title: "服务端口 (Port)", placeholder: "443", text: $nodePort)
+                if !portValidationError.isEmpty {
+                    Text(portValidationError)
+                        .font(.caption)
+                        .foregroundColor(accentRed)
+                }
                 inputField(title: "虚拟 Hub 名称", placeholder: "VPNGATE", text: $nodeHub)
                 inputField(title: "验证用户名", placeholder: "laknl", text: $nodeUsername)
                 inputField(title: "验证密码", placeholder: "输入密码", text: $nodePassword, isSecure: true)
@@ -183,16 +195,21 @@ struct ServerConfigView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .padding(.horizontal, 18)
                         .padding(.vertical, 8)
-                        .background(accentCyan)
+                        .background(isFormValid ? accentCyan : accentCyan.opacity(0.3))
                         .foregroundColor(.black)
                         .cornerRadius(8)
                 }
                 .buttonStyle(PlainButtonStyle())
+                .disabled(!isFormValid)
             }
             .padding(.top, 12)
         }
         .padding(24)
+        #if os(macOS)
         .frame(width: 440)
+        #else
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        #endif
         .background(Color(red: 0.1, green: 0.12, blue: 0.18))
     }
     
@@ -211,6 +228,14 @@ struct ServerConfigView: View {
         }
     }
     
+    // MARK: - Validation
+    private var isFormValid: Bool {
+        let trimmedHost = nodeHost.trimmingCharacters(in: .whitespaces)
+        guard !trimmedHost.isEmpty else { return false }
+        guard let port = Int(nodePort), port > 0, port <= 65535 else { return false }
+        return true
+    }
+    
     // MARK: - Actions
     private func openAddModal() {
         editingConfig = nil
@@ -220,6 +245,8 @@ struct ServerConfigView: View {
         nodeHub = "VPNGATE"
         nodeUsername = "vpn"
         nodePassword = "vpn"
+        hostValidationError = ""
+        portValidationError = ""
         showingSheet = true
     }
     
@@ -231,12 +258,28 @@ struct ServerConfigView: View {
         nodeHub = config.hub
         nodeUsername = config.username
         nodePassword = config.password
+        hostValidationError = ""
+        portValidationError = ""
         showingSheet = true
     }
     
     private func saveConfig() {
-        let portInt = Int(nodePort) ?? 443
-        let finalName = nodeName.trimmingCharacters(in: .whitespaces).isEmpty ? nodeHost : nodeName
+        // Validate inputs
+        hostValidationError = ""
+        portValidationError = ""
+        
+        let trimmedHost = nodeHost.trimmingCharacters(in: .whitespaces)
+        if trimmedHost.isEmpty {
+            hostValidationError = "服务器地址不能为空"
+            return
+        }
+        
+        guard let portInt = Int(nodePort), portInt > 0, portInt <= 65535 else {
+            portValidationError = "端口号必须在 1-65535 之间"
+            return
+        }
+        
+        let finalName = nodeName.trimmingCharacters(in: .whitespaces).isEmpty ? trimmedHost : nodeName
         
         if let editing = editingConfig {
             // Update existing item
@@ -247,7 +290,7 @@ struct ServerConfigView: View {
                 engine.configs[index].hub = nodeHub
                 engine.configs[index].username = nodeUsername
                 engine.configs[index].password = nodePassword
-                
+
                 if engine.currentConfig?.id == editing.id {
                     engine.currentConfig = engine.configs[index]
                 }
@@ -262,15 +305,17 @@ struct ServerConfigView: View {
             }
             engine.appendLog("[Config] 新增节点: \(finalName)")
         }
-        
+        engine.saveConfigs()
+
         showingSheet = false
     }
-    
+
     private func deleteConfig(config: VPNServerConfig) {
         engine.configs.removeAll(where: { $0.id == config.id })
         if engine.currentConfig?.id == config.id {
             engine.currentConfig = engine.configs.first
         }
         engine.appendLog("[Config] 已删除节点配置: \(config.name)")
+        engine.saveConfigs()
     }
 }

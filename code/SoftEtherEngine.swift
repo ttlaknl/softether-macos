@@ -1,7 +1,7 @@
 // SoftEtherEngine.swift
-// Native ARM64 SoftEther Client Controller
-// All bugs fixed: thread safety, race conditions, pipe deadlock, timeouts, bounded logs,
-// settings persistence, credential extraction, git config pollution prevention
+// Native ARM64 SoftEther Client Controller (macOS & iOS Unified Version)
+// Includes all v1.0 fixes (config persistence, v5.02 AccountDetailSet, DNS split & restore,
+// Resources/hamcore.se2 codesign fix, thread-safe logging) + iOS NetworkExtension & Direct SSL-VPN Engine.
 
 import Foundation
 import Combine
@@ -13,7 +13,7 @@ import NetworkExtension
 import UIKit
 #endif
 
-// MARK: - Fix #10b: Hardcoded credentials extracted to constants
+// MARK: - Default Server Credentials
 
 private enum VPNCredentials {
     static let defaultHost = "154.13.4.209"
@@ -26,6 +26,7 @@ private enum VPNCredentials {
     static let fallbackPassword = "vpn"
 }
 
+#if os(macOS)
 // MARK: - Fix #11: Process extension using DispatchSource instead of busy-wait
 
 extension Process {
@@ -48,15 +49,16 @@ extension Process {
         return result == .success && !isRunning
     }
 }
+#endif
 
 // MARK: - Public Types
 
 public enum VPNState: String, CustomStringConvertible {
-    case disconnected = "未连接"
-    case connecting   = "正在连接..."
-    case connected    = "已安全建立隧道"
+    case disconnected  = "未连接"
+    case connecting    = "正在连接..."
+    case connected     = "已安全建立隧道"
     case disconnecting = "正在断开..."
-    case error        = "连接失败"
+    case error         = "连接失败"
 
     public var description: String { self.rawValue }
 }
@@ -90,10 +92,10 @@ public struct NetworkTraffic {
     public var totalRecvMB: Double = 0.0
 }
 
-// MARK: - Fix #10: EngineSettings with UserDefaults persistence
+// MARK: - Fix #10: EngineSettings with UserDefaults persistence (v1.0 optimized defaults)
 
 public struct EngineSettings {
-    private static let defaults = UserDefaults.standard
+    static let defaults = UserDefaults.standard
 
     public var killSwitchEnabled: Bool {
         get { Self.defaults.object(forKey: "killSwitchEnabled") as? Bool ?? true }
@@ -106,7 +108,7 @@ public struct EngineSettings {
     }
 
     public var useUDPAcceleration: Bool {
-        get { Self.defaults.object(forKey: "useUDPAcceleration") as? Bool ?? false }
+        get { Self.defaults.object(forKey: "useUDPAcceleration") as? Bool ?? true }
         set { Self.defaults.set(newValue, forKey: "useUDPAcceleration") }
     }
 
@@ -116,7 +118,7 @@ public struct EngineSettings {
     }
 
     public var maxTCPChannels: Int {
-        get { let v = Self.defaults.integer(forKey: "maxTCPChannels"); return v == 0 ? 1 : v }
+        get { let v = Self.defaults.integer(forKey: "maxTCPChannels"); return v == 0 ? 8 : v }
         set { Self.defaults.set(newValue, forKey: "maxTCPChannels") }
     }
 
@@ -158,18 +160,36 @@ public class SoftEtherEngine: ObservableObject {
     private let routeSetupQueue = DispatchQueue(label: "com.softether.routeSetup", qos: .userInitiated)
 
     private init() {
-        loadDefaultConfigs()
+        loadConfigs()
         appendLog("[System] Native SoftEther Engine Ready (ARM64 Native)")
     }
 
-    // MARK: - Config Management
+    // MARK: - Config Management (v1.0 UserDefaults Persistence + Initial Default Seed)
 
-    public func loadDefaultConfigs() {
-        self.configs = [
-            VPNServerConfig(name: "生产/测试服务器 (\(VPNCredentials.defaultHost))", host: VPNCredentials.defaultHost, port: VPNCredentials.defaultPort, hub: VPNCredentials.defaultHub, username: VPNCredentials.defaultUsername, password: VPNCredentials.defaultPassword, isSelected: true),
-            VPNServerConfig(name: "备用 HTTP 端口节点", host: VPNCredentials.defaultHost, port: 443, hub: VPNCredentials.fallbackHub, username: VPNCredentials.fallbackUsername, password: VPNCredentials.fallbackPassword)
-        ]
-        self.currentConfig = configs.first
+    /// Load user's VPN configs from UserDefaults. Seeds default server on first install.
+    public func loadConfigs() {
+        if let data = EngineSettings.defaults.data(forKey: "savedVPNConfigs"),
+           let decoded = try? JSONDecoder().decode([VPNServerConfig].self, from: data),
+           !decoded.isEmpty {
+            self.configs = decoded
+            self.currentConfig = configs.first
+            appendLog("[Config] 已加载 \(decoded.count) 个保存的节点")
+        } else {
+            self.configs = [
+                VPNServerConfig(name: "默认服务器 (\(VPNCredentials.defaultHost))", host: VPNCredentials.defaultHost, port: VPNCredentials.defaultPort, hub: VPNCredentials.defaultHub, username: VPNCredentials.defaultUsername, password: VPNCredentials.defaultPassword, isSelected: true),
+                VPNServerConfig(name: "备用 443 端口节点", host: VPNCredentials.defaultHost, port: 443, hub: VPNCredentials.fallbackHub, username: VPNCredentials.fallbackUsername, password: VPNCredentials.fallbackPassword)
+            ]
+            self.currentConfig = configs.first
+            saveConfigs()
+            appendLog("[Config] 已初始化默认服务器节点配置")
+        }
+    }
+
+    /// Persist current configs array to UserDefaults so user's nodes survive app restarts.
+    public func saveConfigs() {
+        if let data = try? JSONEncoder().encode(self.configs) {
+            EngineSettings.defaults.set(data, forKey: "savedVPNConfigs")
+        }
     }
 
     // MARK: - Connect / Disconnect
@@ -312,7 +332,10 @@ public class SoftEtherEngine: ObservableObject {
 
             let disableUDP = self.settings.useUDPAcceleration ? "no" : "yes"
             let maxTCP = "\(self.settings.maxTCPChannels)"
-            let detailOut = self.runDirectCommand(execPath: vpncmdBin, args: ["127.0.0.1", "/CLIENT", "/CMD:AccountDetailSet", accountName, "/DISABLEUDP:\(disableUDP)", "/MAXTCP:\(maxTCP)", "/NOTIMEOUT:yes"])
+            // Fix (v1.0): vpncmd v5.02 Developer Edition requires ALL parameters to be specified
+            // together in a single AccountDetailSet call; omitting any causes silent failure.
+            // /NOTIMEOUT is not supported in v5.02 and must not be passed.
+            let detailOut = self.runDirectCommand(execPath: vpncmdBin, args: ["127.0.0.1", "/CLIENT", "/CMD:AccountDetailSet", accountName, "/MAXTCP:\(maxTCP)", "/INTERVAL:1", "/TTL:0", "/HALF:no", "/BRIDGE:no", "/MONITOR:no", "/NOTRACK:no", "/NOQOS:no", "/DISABLEUDP:\(disableUDP)"])
             self.logFromBackground("[vpncmd AccountDetailSet]: \(detailOut)")
 
             self.logFromBackground("[vpncmd] 发起物理 SSL 会话连接 (AccountConnect)...")
@@ -342,10 +365,14 @@ public class SoftEtherEngine: ObservableObject {
                     self.activeRouteHost = config.host
                     self.routeSetupQueue.async {
                         self.configureSystemRoutes(serverHost: config.host)
-                        DispatchQueue.main.async { self.startTrafficMetricsTimer() }
+                        DispatchQueue.main.async {
+                            self.pipelineLock.unlock()
+                            self.startTrafficMetricsTimer()
+                        }
                     }
                 } else {
                     self.pipelineRunning = false
+                    self.pipelineLock.unlock()
                     self.state = .error
                     self.assignedIP = "连接未建立"
                     self.logFromBackground("[Error] 真实 Session 建立失败:\n\(statusDetail)")
@@ -365,11 +392,20 @@ public class SoftEtherEngine: ObservableObject {
         self.logFromBackground("[vpncmd AccountDisconnect]: \(disOut)")
     }
 
-    // MARK: - Network Route Configuration
+    // MARK: - Network Route Configuration (v1.0 DNS Split & Restore)
 
     private func configureSystemRoutes(serverHost: String) {
         self.logFromBackground("[Network] 正在检测多网卡环境并配置路由...")
         _ = self.runShellCommand(cmd: "rm -f /tmp/softether_dhcp_result.txt")
+
+        // Save user's original DNS before overwriting, so disconnect can restore it
+        let findNetSvcCmd0 = "networksetup -listallnetworkservices | grep -v '*' | grep -E 'Wi-Fi|Ethernet|以太网' | head -n 1"
+        let activeNetSvc0 = self.runShellCommand(cmd: findNetSvcCmd0).trimmingCharacters(in: .whitespacesAndNewlines)
+        let netSvcName0 = activeNetSvc0.isEmpty ? "Wi-Fi" : activeNetSvc0
+        let currentDNS = self.runShellCommand(cmd: "networksetup -getdnsservers \"\(netSvcName0)\" 2>/dev/null").trimmingCharacters(in: .whitespacesAndNewlines)
+        let savedDNS = currentDNS.contains("aren't") || currentDNS.contains("没有") ? "Empty" : currentDNS
+        EngineSettings.defaults.set(savedDNS, forKey: "savedOriginalDNS")
+        self.logFromBackground("[Network] 已保存用户原 DNS: \(savedDNS)")
 
         // First read exact utun device reported by the kernel control socket
         var targetUtun = self.runShellCommand(cmd: "cat /tmp/softether_utun_name.txt 2>/dev/null").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -431,14 +467,13 @@ public class SoftEtherEngine: ObservableObject {
             }
         }
 
-        // Fix: DNS via tunnel → SecureNAT floods NAT table with UDP sessions.
-        // Solution: only China-accessible DNS via physical gateway (bypass tunnel).
-        // 1.1.1.1/8.8.8.8 excluded — GFW blocks them on physical path in China.
-        let dnsHosts = ["223.5.5.5", "114.114.114.114"]
-        let dnsBypassRoutes = physGw.isEmpty ? "" : dnsHosts.map {
-            "route delete -host \($0) 2>/dev/null; route add -host \($0) \(physGw) 2>/dev/null || true; "
-        }.joined()
-        self.logFromBackground("[Network] DNS 物理直连 (跳过隧道): \(dnsHosts.joined(separator: ", ")) → \(physGw)")
+        // Use SoftEther SecureNAT-provided DNS (via DHCP) as primary tunnel DNS.
+        // Falls back to 8.8.8.8 if DHCP didn't return a DNS address.
+        // 223.5.5.5 stays on physical path for China domains.
+        let primaryDNS = dnsIP.isEmpty ? "8.8.8.8" : dnsIP
+        let dnsHosts = [primaryDNS, "223.5.5.5"]
+        let dnsBypassRoutes = physGw.isEmpty ? "" : "route delete -host 223.5.5.5 2>/dev/null; route add -host 223.5.5.5 \(physGw) 2>/dev/null || true; "
+        self.logFromBackground("[Network] DNS 分流: \(primaryDNS) (SecureNAT, 走隧道) + 223.5.5.5 (国内域名, 物理直连)")
 
         let routeScript = "do shell script \"\(physGwOpt)\(dnsBypassRoutes)ifconfig \(targetUtun) \(clientIP) \(gatewayIP) netmask 255.255.255.0 mtu 1280 up || true; route delete -net 0.0.0.0/1 2>/dev/null || true; route add -net 0.0.0.0/1 \(gatewayIP) 2>/dev/null || true; route delete -net 128.0.0.0/1 2>/dev/null || true; route add -net 128.0.0.0/1 \(gatewayIP) 2>/dev/null || true; networksetup -setdnsservers \\\"\(netSvcName)\\\" \(dnsHosts.joined(separator: " ")) 2>/dev/null || true\" with administrator privileges"
 
@@ -454,7 +489,6 @@ public class SoftEtherEngine: ObservableObject {
             }
         }
 
-        // Post-route verification: confirm key routes exist
         if routeApplied {
             let tunnelRoute = self.runShellCommand(cmd: "netstat -rn -f inet | grep '^0.0.0.0/1' | head -n 1").trimmingCharacters(in: .whitespacesAndNewlines)
             let serverRoute = self.runShellCommand(cmd: "netstat -rn -f inet | grep '\(serverHost)' | head -n 1").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -476,7 +510,6 @@ public class SoftEtherEngine: ObservableObject {
                 self.logFromBackground("[Network] ✓ DNS 直连: \(dnsRoute)")
             }
 
-            // Quick connectivity test
             let quickPing = self.runShellCommand(cmd: "ping -c 2 -W 2000 \(gatewayIP) 2>/dev/null | tail -n 1").trimmingCharacters(in: .whitespacesAndNewlines)
             self.logFromBackground("[Network] 隧道网关连通性: \(quickPing)")
         }
@@ -498,7 +531,10 @@ public class SoftEtherEngine: ObservableObject {
         let dnsHostCleanup = ["1.1.1.1", "8.8.8.8", "223.5.5.5", "114.114.114.114"].map {
             "route delete -host \($0) 2>/dev/null; "
         }.joined()
-        let cleanRouteScript = "do shell script \"route delete -net 0.0.0.0/1 2>/dev/null; route delete -net 128.0.0.0/1 2>/dev/null; \(hostRouteCleanup)\(dnsHostCleanup)networksetup -setdnsservers \\\"\(netSvcName)\\\" Empty 2>/dev/null\" with administrator privileges"
+        // Restore user's original DNS configuration saved before VPN connection
+        let savedDNS = EngineSettings.defaults.string(forKey: "savedOriginalDNS") ?? "Empty"
+        let restoreDNS = savedDNS.isEmpty ? "Empty" : savedDNS
+        let cleanRouteScript = "do shell script \"route delete -net 0.0.0.0/1 2>/dev/null; route delete -net 128.0.0.0/1 2>/dev/null; \(hostRouteCleanup)\(dnsHostCleanup)networksetup -setdnsservers \\\"\(netSvcName)\\\" \\\"\(restoreDNS)\\\" 2>/dev/null\" with administrator privileges"
         var error: NSDictionary?
         if let scriptObject = NSAppleScript(source: cleanRouteScript) {
             _ = scriptObject.executeAndReturnError(&error)
@@ -554,34 +590,42 @@ public class SoftEtherEngine: ObservableObject {
     }
     #endif  // os(macOS)
 
-    // MARK: - iOS Pipeline
+    // MARK: - iOS Pipeline (NetworkExtension + Direct Session Fallback for Personal .p12)
 
     #if os(iOS)
+    private var iosDirectSession: SoftEtherTunnelSession?
+
     private func startIOSNetworkExtensionConnection(config: VPNServerConfig) {
+        self.activeRouteHost = config.host
+        let bundleId = Bundle.main.bundleIdentifier ?? "org.softether.SoftEtherUI"
+        let providerId = "\(bundleId).PacketTunnel"
+
         NETunnelProviderManager.loadAllFromPreferences { managers, error in
             Task { @MainActor in
                 if let err = error {
-                    self.appendLog("[iOS Error] 加载 NEPreferences 失败: \(err.localizedDescription)")
-                    self.state = .error
+                    self.appendLog("[iOS Notice] NEPreferences 不可用 (\(err.localizedDescription))，自动切换为内置 SSL-VPN 直连引擎...")
+                    self.startIOSDirectSessionFallback(config: config)
                     return
                 }
                 let manager = managers?.first ?? NETunnelProviderManager()
                 let protocolConfiguration = NETunnelProviderProtocol()
-                protocolConfiguration.providerBundleIdentifier = "com.softether.ui.PacketTunnel"
+                protocolConfiguration.providerBundleIdentifier = providerId
                 protocolConfiguration.serverAddress = "\(config.host):\(config.port)"
                 protocolConfiguration.providerConfiguration = [
                     "hub": config.hub,
+                    "port": config.port,
                     "username": config.username,
                     "password": config.password
                 ]
                 manager.protocolConfiguration = protocolConfiguration
-                manager.localizedDescription = "SoftEther VPN Profile"
+                manager.localizedDescription = "SoftEther VPN"
                 manager.isEnabled = true
                 manager.saveToPreferences { saveErr in
                     Task { @MainActor in
                         if let sErr = saveErr {
-                            self.appendLog("[iOS Error] 保存 VPN 描述文件失败: \(sErr.localizedDescription)")
-                            self.state = .error
+                            self.appendLog("[iOS Notice] 当前个人证书不含 NetworkExtension 权限 (\(sErr.localizedDescription))")
+                            self.appendLog("[iOS Fallback] 正在启动免权限内置 SSL-VPN 协议栈直连 \(config.host):\(config.port)...")
+                            self.startIOSDirectSessionFallback(config: config)
                             return
                         }
                         manager.loadFromPreferences { _ in
@@ -589,12 +633,13 @@ public class SoftEtherEngine: ObservableObject {
                                 do {
                                     try manager.connection.startVPNTunnel()
                                     self.state = .connected
-                                    self.assignedIP = "获取中... (NE)"
-                                    self.appendLog("[iOS Success] iOS Packet Tunnel Provider 已启动")
+                                    self.assignedIP = "192.168.30.x (NE)"
+                                    self.appendLog("[iOS Success] NetworkExtension 全局隧道已启动 -> \(config.host):\(config.port)")
                                     self.startTrafficMetricsTimer()
+                                    self.queryExtensionAssignedIP(manager: manager)
                                 } catch {
-                                    self.appendLog("[iOS Error] 无法启动 VPN Tunnel: \(error.localizedDescription)")
-                                    self.state = .error
+                                    self.appendLog("[iOS Notice] 系统拒绝启动 NE 插件 (\(error.localizedDescription))，切换为内置直连模式...")
+                                    self.startIOSDirectSessionFallback(config: config)
                                 }
                             }
                         }
@@ -604,7 +649,57 @@ public class SoftEtherEngine: ObservableObject {
         }
     }
 
+    private func queryExtensionAssignedIP(manager: NETunnelProviderManager) {
+        guard let session = manager.connection as? NETunnelProviderSession,
+              let msg = "status".data(using: .utf8) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+            try? session.sendProviderMessage(msg) { response in
+                guard let data = response,
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+                      let ip = dict["assignedIP"], !ip.isEmpty else { return }
+                Task { @MainActor in
+                    self.assignedIP = ip
+                    self.appendLog("[iOS NE] 虚拟网卡已绑定内网 IP: \(ip)")
+                }
+            }
+        }
+    }
+
+    private func startIOSDirectSessionFallback(config: VPNServerConfig) {
+        iosDirectSession?.stop()
+        let session = SoftEtherTunnelSession(
+            host: config.host,
+            port: UInt16(clamping: config.port),
+            hub: config.hub,
+            username: config.username,
+            password: config.password
+        )
+        session.onLog = { [weak self] msg in
+            self?.logFromBackground(msg)
+        }
+        self.iosDirectSession = session
+
+        session.start { [weak self] result in
+            Task { @MainActor in
+                guard let self = self else { return }
+                switch result {
+                case .success(let info):
+                    self.state = .connected
+                    self.assignedIP = info.assignedIP
+                    self.appendLog("[iOS Direct] 握手成功！会话: \(info.sessionName)，分配 IP: \(info.assignedIP)")
+                    self.startTrafficMetricsTimer()
+                case .failure(let err):
+                    self.state = .error
+                    self.assignedIP = "连接失败"
+                    self.appendLog("[iOS Error] SSL-VPN 握手失败: \(err.localizedDescription)")
+                }
+            }
+        }
+    }
+
     private func stopIOSNetworkExtensionConnection() {
+        iosDirectSession?.stop()
+        iosDirectSession = nil
         NETunnelProviderManager.loadAllFromPreferences { managers, _ in
             managers?.first?.connection.stopVPNTunnel()
         }
@@ -642,16 +737,22 @@ public class SoftEtherEngine: ObservableObject {
     }
 
     public func appendLog(_ message: String) {
-        let timestamp = dateFormatter.string(from: Date())
-        logs.append("[\(timestamp)] \(message)")
-        if logs.count > kMaxLogEntries {
-            logs.removeFirst(logs.count - kMaxLogEntries)
+        if Thread.isMainThread {
+            let timestamp = dateFormatter.string(from: Date())
+            logs.append("[\(timestamp)] \(message)")
+            if logs.count > kMaxLogEntries {
+                logs.removeFirst(logs.count - kMaxLogEntries)
+            }
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.appendLog(message)
+            }
         }
     }
 
-    /// Fix #2: Thread-safe log from background queues
+    /// Thread-safe log dispatch from background queues
     private func logFromBackground(_ message: String) {
-        DispatchQueue.main.async { [weak self] in self?.appendLog(message) }
+        appendLog(message)
     }
 
     public var formattedDuration: String {
@@ -666,12 +767,13 @@ public class SoftEtherEngine: ObservableObject {
     /// Run multi-layer diagnostics and log results to help isolate packet loss.
     /// Call this from SettingsView after VPN is connected.
     public func runNetworkDiagnostics() {
-        guard let serverHost = self.activeRouteHost else {
+        guard let serverHost = self.activeRouteHost ?? self.currentConfig?.host else {
             self.appendLog("[Diag] VPN 未连接，跳过诊断")
             return
         }
         self.appendLog("[Diag] ========== 网络诊断开始 ==========")
 
+        #if os(macOS)
         // 1. Physical path latency to VPN server (no tunnel)
         let physPing = self.runShellCommand(cmd: "ping -c 5 -W 2000 \(serverHost) 2>/dev/null | tail -n 3")
         self.appendLog("[Diag] 物理链路 → \(serverHost):\n\(physPing)")
@@ -700,8 +802,26 @@ public class SoftEtherEngine: ObservableObject {
 
         self.appendLog("[Diag] ========== 网络诊断结束 ==========")
         self.appendLog("[Diag] 解读: 物理链路丢包=ISP问题 | 隧道丢包=NAT问题 | TCP正常=ICMP特有问题")
+        #elseif os(iOS)
+        let start = Date()
+        guard let url = URL(string: "https://api.ipify.org?format=json") else { return }
+        self.appendLog("[Diag iOS] 正在检测目标服务器 \(serverHost) 连通性与出口 IP...")
+        URLSession.shared.dataTask(with: url) { data, _, error in
+            let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
+            Task { @MainActor in
+                if let err = error {
+                    self.appendLog("[Diag iOS] 外网探测失败 (\(elapsedMs)ms): \(err.localizedDescription)")
+                } else if let d = data, let text = String(data: d, encoding: .utf8) {
+                    self.appendLog("[Diag iOS] 当前出口公网响应 (\(elapsedMs)ms): \(text)")
+                }
+                self.appendLog("[Diag iOS] 当前分配隧道 IP: \(self.assignedIP)")
+                self.appendLog("[Diag] ========== 网络诊断结束 ==========")
+            }
+        }.resume()
+        #endif
     }
 
+    #if os(macOS)
     // MARK: - Process Execution
 
     /// Fix #1 & #4: Read pipe BEFORE wait; close handles on timeout
@@ -755,7 +875,7 @@ public class SoftEtherEngine: ObservableObject {
         }
     }
 
-    // MARK: - File Deployment
+    // MARK: - File Deployment (v1.0 Contents/Resources/hamcore.se2 Support)
 
     /// Fix #5: allowKill controls whether to kill running vpnclient
     private func resolveAbsoluteExecDir(allowKill: Bool = true) -> String {
@@ -776,8 +896,14 @@ public class SoftEtherEngine: ObservableObject {
         if needsDeploy {
             do {
                 try fm.createDirectory(atPath: workDir, withIntermediateDirectories: true)
+                let resourcesPath = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources").path
                 for file in filesToDeploy {
-                    let src = "\(bundlePath)/\(file)"
+                    let src: String
+                    if file == "hamcore.se2" && fm.fileExists(atPath: "\(resourcesPath)/\(file)") {
+                        src = "\(resourcesPath)/\(file)"
+                    } else {
+                        src = "\(bundlePath)/\(file)"
+                    }
                     let dst = "\(workDir)/\(file)"
                     if fm.fileExists(atPath: src) {
                         try? fm.removeItem(atPath: dst)
@@ -807,6 +933,7 @@ public class SoftEtherEngine: ObservableObject {
     private func escapeAppleScriptString(_ s: String) -> String {
         return s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
     }
+    #endif
 
     /// Fix #9: Improved IPv4 validation without heuristic that rejects valid IPs
     private func findValidIPv4InString(_ text: String, serverHost: String) -> String? {

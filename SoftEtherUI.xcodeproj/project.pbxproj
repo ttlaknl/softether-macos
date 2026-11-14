@@ -13,6 +13,7 @@
 		AA0000000000000000000017 /* LogConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000016 /* LogConsoleView.swift */; };
 		AA0000000000000000000019 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000018 /* SettingsView.swift */; };
 		AA000000000000000000001B /* SoftEtherEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001A /* SoftEtherEngine.swift */; };
+		AA000000000000000000001D /* SoftEtherProtocolClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001C /* SoftEtherProtocolClient.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +24,7 @@
 		AA0000000000000000000016 /* LogConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogConsoleView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000018 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		AA000000000000000000001A /* SoftEtherEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoftEtherEngine.swift; sourceTree = "<group>"; };
+		AA000000000000000000001C /* SoftEtherProtocolClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/SoftEtherProtocolClient.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -49,6 +51,7 @@
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000010 /* App.swift */,
+				AA000000000000000000001C /* SoftEtherProtocolClient.swift */,
 				AA0000000000000000000005 /* Views */,
 			);
 			path = SoftEtherUI;
@@ -162,7 +165,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nDEST=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/MacOS\"\nmkdir -p \"${DEST}\"\n\n# Compile native C core if vpnclient not found\nif [ ! -f \"${SRCROOT}/vpnclient\" ]; then\n    echo \"Core binaries not found, running compile_softether_core_arm64.sh...\"\n    \"${SRCROOT}/compile_softether_core_arm64.sh\"\nfi\n\n# Copy binaries and libraries\nfor f in vpnclient vpncmd hamcore.se2 libcedar.dylib libmayaqua.dylib; do\n    if [ -f \"${SRCROOT}/${f}\" ]; then\n        cp -f \"${SRCROOT}/${f}\" \"${DEST}/\"\n        chmod +x \"${DEST}/${f}\" 2>/dev/null || true\n    fi\ndone\n\n# Fix rpaths for self-contained app loading\nfor bin in vpnclient vpncmd; do\n    if [ -f \"${DEST}/${bin}\" ]; then\n        install_name_tool -change @rpath/libcedar.dylib @executable_path/libcedar.dylib \"${DEST}/${bin}\" 2>/dev/null || true\n        install_name_tool -change @rpath/libmayaqua.dylib @executable_path/libmayaqua.dylib \"${DEST}/${bin}\" 2>/dev/null || true\n    fi\ndone\n\nfor dylib in libcedar.dylib libmayaqua.dylib; do\n    if [ -f \"${DEST}/${dylib}\" ]; then\n        install_name_tool -id \"@executable_path/${dylib}\" \"${DEST}/${dylib}\" 2>/dev/null || true\n        install_name_tool -change @rpath/libmayaqua.dylib @executable_path/libmayaqua.dylib \"${DEST}/${dylib}\" 2>/dev/null || true\n        install_name_tool -change @rpath/libcedar.dylib @executable_path/libcedar.dylib \"${DEST}/${dylib}\" 2>/dev/null || true\n    fi\ndone\n";
+			shellScript = "set -e\nDEST=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/MacOS\"\nRES_DEST=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/Resources\"\nmkdir -p \"${DEST}\"\nmkdir -p \"${RES_DEST}\"\n\n# Compile native C core if vpnclient not found\nif [ ! -f \"${SRCROOT}/vpnclient\" ]; then\n    echo \"Core binaries not found, running compile_softether_core_arm64.sh...\"\n    \"${SRCROOT}/compile_softether_core_arm64.sh\"\nfi\n\n# Clean up hamcore.se2 from MacOS/ if present (it is a data file, not Mach-O code object)\nrm -f \"${DEST}/hamcore.se2\"\n\n# Copy resource file to Contents/Resources (prevent CodeSign failure)\nif [ -f \"${SRCROOT}/hamcore.se2\" ]; then\n    cp -f \"${SRCROOT}/hamcore.se2\" \"${RES_DEST}/\"\n    chmod 644 \"${RES_DEST}/hamcore.se2\"\nfi\n\n# Copy binaries and libraries to Contents/MacOS\nfor f in vpnclient vpncmd libcedar.dylib libmayaqua.dylib; do\n    if [ -f \"${SRCROOT}/${f}\" ]; then\n        cp -f \"${SRCROOT}/${f}\" \"${DEST}/\"\n    fi\ndone\n\nchmod +x \"${DEST}/vpnclient\" \"${DEST}/vpncmd\" 2>/dev/null || true\n\n# Fix rpaths for self-contained app loading\nfor bin in vpnclient vpncmd; do\n    if [ -f \"${DEST}/${bin}\" ]; then\n        install_name_tool -change @rpath/libcedar.dylib @executable_path/libcedar.dylib \"${DEST}/${bin}\" 2>/dev/null || true\n        install_name_tool -change @rpath/libmayaqua.dylib @executable_path/libmayaqua.dylib \"${DEST}/${bin}\" 2>/dev/null || true\n    fi\ndone\n\nfor dylib in libcedar.dylib libmayaqua.dylib; do\n    if [ -f \"${DEST}/${dylib}\" ]; then\n        install_name_tool -id \"@executable_path/${dylib}\" \"${DEST}/${dylib}\" 2>/dev/null || true\n        install_name_tool -change @rpath/libmayaqua.dylib @executable_path/libmayaqua.dylib \"${DEST}/${dylib}\" 2>/dev/null || true\n        install_name_tool -change @rpath/libcedar.dylib @executable_path/libcedar.dylib \"${DEST}/${dylib}\" 2>/dev/null || true\n    fi\ndone\n\n# Pre-sign embedded binaries and libraries for clean Xcode CodeSign\nfor item in libmayaqua.dylib libcedar.dylib vpnclient vpncmd; do\n    if [ -f \"${DEST}/${item}\" ]; then\n        codesign --force --sign - \"${DEST}/${item}\" 2>/dev/null || true\n    fi\ndone\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -177,6 +180,7 @@
 				AA0000000000000000000017 /* LogConsoleView.swift in Sources */,
 				AA0000000000000000000019 /* SettingsView.swift in Sources */,
 				AA000000000000000000001B /* SoftEtherEngine.swift in Sources */,
+				AA000000000000000000001D /* SoftEtherProtocolClient.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

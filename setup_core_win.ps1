@@ -16,44 +16,46 @@ if (Test-Path $ExtractDir) {
     Remove-Item -Path $ExtractDir -Recurse -Force
 }
 
-# 1. Download Sources using GitHub Mirror or Direct Zip
-$Url1 = "https://ghproxy.net/https://github.com/SoftEtherVPN/SoftEtherVPN/archive/refs/heads/master.zip"
-$Url2 = "https://github.com/SoftEtherVPN/SoftEtherVPN/archive/refs/heads/master.zip"
+# 1. Clone source with submodules (GitHub ZIP does NOT include submodules - build will fail without them)
+$GitAvailable = $null -ne (Get-Command git -ErrorAction SilentlyContinue)
 
-$Downloaded = $false
-
-Write-Host "[Downloading] Attempting fast mirror download from $Url1..." -ForegroundColor Green
-try {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri $Url1 -OutFile $SourceZip -TimeoutSec 45
-    $Downloaded = $true
-    Write-Host "[Success] Downloaded successfully via Mirror!" -ForegroundColor Green
-} catch {
-    Write-Host "[Warning] Mirror download failed or timed out. Trying direct GitHub link..." -ForegroundColor Yellow
-}
-
-if (-not $Downloaded) {
+if ($GitAvailable) {
+    Write-Host "[Cloning] Using git clone --recursive (includes required submodules)..." -ForegroundColor Green
     try {
-        Invoke-WebRequest -Uri $Url2 -OutFile $SourceZip -TimeoutSec 60
-        $Downloaded = $true
-        Write-Host "[Success] Downloaded successfully via GitHub!" -ForegroundColor Green
+        git clone --depth 1 --recursive --shallow-submodules "https://github.com/SoftEtherVPN/SoftEtherVPN.git" $ExtractDir
+        Write-Host "[Success] Source code cloned successfully with all submodules!" -ForegroundColor Green
     } catch {
-        Write-Host "[Error] Download failed. Please check network or download zip manually." -ForegroundColor Red
+        Write-Host "[Error] git clone failed: $_" -ForegroundColor Red
         exit 1
     }
-}
+} else {
+    Write-Host "[Warning] Git not found! Falling back to ZIP download." -ForegroundColor Yellow
+    Write-Host "[Warning] ZIP packages do NOT include Git submodules - you may need to manually init submodules later." -ForegroundColor Yellow
 
-# 2. Extract Archive
-Write-Host "[Extracting] Extracting source package to softether_src..." -ForegroundColor Green
-Expand-Archive -Path $SourceZip -DestinationPath $WorkingDir -Force
+    $Url1 = "https://github.com/SoftEtherVPN/SoftEtherVPN/archive/refs/heads/master.zip"
+    $SourceZip = Join-Path $WorkingDir "softether_src.zip"
 
-$UnzippedDir = Get-ChildItem -Path $WorkingDir -Filter "SoftEtherVPN-*" | Select-Object -First 1
-if ($UnzippedDir) {
-    Rename-Item -Path $UnzippedDir.FullName -NewName "softether_src"
-}
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $Url1 -OutFile $SourceZip -TimeoutSec 60
+        Write-Host "[Success] Downloaded successfully via GitHub!" -ForegroundColor Green
+    } catch {
+        Write-Host "[Error] Download failed. Please install Git (winget install Git.Git) and retry." -ForegroundColor Red
+        exit 1
+    }
 
-if (Test-Path $SourceZip) {
-    Remove-Item -Path $SourceZip -Force
+    # 2. Extract Archive
+    Write-Host "[Extracting] Extracting source package to softether_src..." -ForegroundColor Green
+    Expand-Archive -Path $SourceZip -DestinationPath $WorkingDir -Force
+
+    $UnzippedDir = Get-ChildItem -Path $WorkingDir -Filter "SoftEtherVPN-*" | Select-Object -First 1
+    if ($UnzippedDir) {
+        Rename-Item -Path $UnzippedDir.FullName -NewName "softether_src"
+    }
+
+    if (Test-Path $SourceZip) {
+        Remove-Item -Path $SourceZip -Force
+    }
 }
 
 Write-Host "============================================================" -ForegroundColor Cyan
