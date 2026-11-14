@@ -2,7 +2,7 @@
 
 # build_deps_arm64.sh
 # 专门为 Apple Silicon (M系列 CPU / arm64) 重新编译 OpenSSL 及 SoftEther 依赖库
-set -e
+set -euo pipefail
 
 echo "============================================================"
 echo " SoftEther VPN Dependency Builder for Apple Silicon (arm64)"
@@ -41,9 +41,16 @@ if [ "$IS_ARM64_CRYPTO" = false ]; then
     echo "[Build] Downloading & Compiling OpenSSL for darwin64-arm64-cc..."
     cd "${BUILD_DIR}"
     OPENSSL_VER="3.1.4"
+    OPENSSL_SHA256="840af5366ab9b522bde525826be3ef0fb0af81c6a9ebd84caa600fea1571571f"
     if [ ! -f "openssl-${OPENSSL_VER}.tar.gz" ]; then
         curl -LO "https://www.openssl.org/source/openssl-${OPENSSL_VER}.tar.gz"
     fi
+    # 校验 SHA256 以防止中间人攻击或代码投毒
+    echo "${OPENSSL_SHA256}  openssl-${OPENSSL_VER}.tar.gz" | shasum -a 256 -c - || {
+        echo "[Error] OpenSSL SHA256 校验失败！文件可能被篡改，请手动检查。"
+        rm -f "openssl-${OPENSSL_VER}.tar.gz"
+        exit 1
+    }
     tar -zxf "openssl-${OPENSSL_VER}.tar.gz"
     cd "openssl-${OPENSSL_VER}"
     

@@ -37,7 +37,7 @@ struct SettingsView: View {
                 sectionCard(title: "SoftEther 引擎协议与加速", icon: "cpu.fill") {
                     VStack(spacing: 16) {
                         Toggle(isOn: $engine.settings.useUDPAcceleration) {
-                            settingLabel(title: "UDP Acceleration 加速协议", description: "默认关闭 (TCP 传输可靠重传)。开启后 UDP 无重传，丢包链路会加剧丢包")
+                            settingLabel(title: "UDP Acceleration 加速协议", description: "跨洲 VPN 推荐开启：应用层重传优于 TCP 慢启动，高延迟链路显著提速")
                         }
                         
                         Divider().background(Color.white.opacity(0.08))
@@ -57,7 +57,7 @@ struct SettingsView: View {
                         Divider().background(Color.white.opacity(0.08))
                         
                         HStack {
-                            settingLabel(title: "最大 TCP 并发通道数", description: "推荐 1 (保证报文顺序，防丢包)；多通道仅适合低延迟专线")
+                            settingLabel(title: "最大 TCP 并发通道数", description: "高延迟链路推荐 4-8 通道突破拥塞窗口，低延迟专线选 1")
                             Spacer()
                             Picker("", selection: $engine.settings.maxTCPChannels) {
                                 Text("1").tag(1)

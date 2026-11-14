@@ -49,7 +49,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         view.addSubview(cmdBtn)
         
         // Bring app to front
-        NSApp.activate(ignoringOtherApps: true)
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+    
+    /// Escape a string for safe embedding inside AppleScript double-quoted strings
+    private func escapeForAppleScript(_ s: String) -> String {
+        return s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
     }
     
     @objc func startVPN() {
@@ -61,7 +71,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func runCmd() {
-        let dirPath = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS").path
+        let dirPath = escapeForAppleScript(Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS").path)
         let script = """
         tell application "Terminal"
             do script "cd \\"\(dirPath)\\" && ./vpncmd"
@@ -72,8 +82,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func runCommand(cmd: String) {
-        let dirPath = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS").path
-        let script = "do shell script \"cd \\\"\(dirPath)\\\" && \(cmd)\" with administrator privileges"
+        let dirPath = escapeForAppleScript(Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS").path)
+        let escapedCmd = escapeForAppleScript(cmd)
+        let script = "do shell script \"cd \\\"\(dirPath)\\\" && \(escapedCmd)\" with administrator privileges"
         runAppleScript(script: script)
     }
 

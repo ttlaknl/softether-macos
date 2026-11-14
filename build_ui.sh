@@ -1,7 +1,11 @@
 #!/bin/bash
 
 # Multi-platform Build Script for SoftEther UI Client (arm64 Only - Apple Silicon)
-set -e
+set -euo pipefail
+
+# 自动切换到脚本所在目录，支持从任意终端目录调用
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
 
 APP_NAME="SoftEtherUI"
 APP_BUNDLE="${APP_NAME}.app"
@@ -59,7 +63,9 @@ DYLIB_SRC_DIR="softether_src/build"
 
 if [ -f "vpnclient" ]; then cp -f vpnclient "${APP_EXECUTABLE_DIR}/"; fi
 if [ -f "vpncmd" ]; then cp -f vpncmd "${APP_EXECUTABLE_DIR}/"; fi
-if [ -f "hamcore.se2" ]; then cp -f hamcore.se2 "${APP_EXECUTABLE_DIR}/"; fi
+# hamcore.se2 是资源文件，必须放在 Contents/Resources/ 中，放入 Contents/MacOS 会导致 Xcode codesign 报错
+if [ -f "hamcore.se2" ]; then cp -f hamcore.se2 "${APP_RESOURCES_DIR}/"; fi
+rm -f "${APP_EXECUTABLE_DIR}/hamcore.se2"
 
 # 关键: 拷贝动态库到 App Bundle (缺少它们 vpnclient/vpncmd 会 dyld 崩溃)
 for dylib in libcedar.dylib libmayaqua.dylib; do
@@ -122,6 +128,16 @@ cat <<EOF > "${APP_BUNDLE}/Contents/Info.plist"
 </dict>
 </plist>
 EOF
+
+# 5. Code Signing (Required for Apple Silicon arm64 - AMFI enforcement)
+echo "[4/4] Signing App Bundle (Ad-Hoc) for Apple Silicon..."
+for item in libmayaqua.dylib libcedar.dylib vpnclient vpncmd; do
+    if [ -f "${APP_EXECUTABLE_DIR}/${item}" ]; then
+        codesign --force --sign - "${APP_EXECUTABLE_DIR}/${item}" 2>/dev/null || true
+    fi
+done
+codesign --force --deep --sign - "${APP_BUNDLE}"
+echo "  - ✓ Code signing completed (Ad-Hoc)"
 
 echo "============================================================"
 echo " ${APP_BUNDLE} Built successfully for ARM64!"

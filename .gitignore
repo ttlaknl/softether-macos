@@ -19,5 +19,12 @@ err.txt
 log.txt
 log*.txt
 
-# App bundle build output
+# App bundle & iOS IPA build output
 SoftEtherUI.app/
+build_ios/
+*.ipa
+*.dmg
+*.pkg
+
+# Unrelated workspace directories
+openwrt/

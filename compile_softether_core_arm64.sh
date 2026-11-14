@@ -2,7 +2,7 @@
 
 # compile_softether_core_arm64.sh
 # 支持本地/Win 提前下载源码离线编译，亦支持浅克隆
-set -e
+set -euo pipefail
 
 echo "============================================================"
 echo " Building SoftEther VPN Core C-Source for Apple Silicon ARM64"
@@ -26,25 +26,13 @@ if [ -f "${SRC_DIR}/src/libhamcore/CMakeLists.txt" ]; then
 else
     echo "  - [未找到离线源码] 尝试浅克隆极速拉取源码与全部子模块..."
 
-    # Fix #14: Save original global git config values before temporarily modifying them
-    _OLD_POSTBUF=$(git config --global --get http.postBuffer 2>/dev/null || echo "")
-    _OLD_LOWSPEED_LIMIT=$(git config --global --get http.lowSpeedLimit 2>/dev/null || echo "")
-    _OLD_LOWSPEED_TIME=$(git config --global --get http.lowSpeedTime 2>/dev/null || echo "")
-
-    git config --global http.postBuffer 524288000 2>/dev/null || true
-    git config --global http.lowSpeedLimit 0 2>/dev/null || true
-    git config --global http.lowSpeedTime 999999 2>/dev/null || true
-
     rm -rf "${SRC_DIR}"
-    if ! git clone --depth 1 --recursive --shallow-submodules https://ghproxy.net/https://github.com/SoftEtherVPN/SoftEtherVPN.git "${SRC_DIR}"; then
+    # 使用 -c 参数仅对当前 clone 命令生效，不修改全局 Git 配置
+    GIT_CLONE_OPTS="-c http.postBuffer=524288000 -c http.lowSpeedLimit=0 -c http.lowSpeedTime=999999"
+    if ! git ${GIT_CLONE_OPTS} clone --depth 1 --recursive --shallow-submodules https://ghproxy.net/https://github.com/SoftEtherVPN/SoftEtherVPN.git "${SRC_DIR}"; then
         echo "  - 镜像拉取超时，尝试直连浅克隆..."
-        git clone --depth 1 --recursive --shallow-submodules https://github.com/SoftEtherVPN/SoftEtherVPN.git "${SRC_DIR}"
+        git ${GIT_CLONE_OPTS} clone --depth 1 --recursive --shallow-submodules https://github.com/SoftEtherVPN/SoftEtherVPN.git "${SRC_DIR}"
     fi
-
-    # Fix #14: Restore original global git config values
-    if [ -n "$_OLD_POSTBUF" ]; then git config --global http.postBuffer "$_OLD_POSTBUF" 2>/dev/null; else git config --global --unset http.postBuffer 2>/dev/null || true; fi
-    if [ -n "$_OLD_LOWSPEED_LIMIT" ]; then git config --global http.lowSpeedLimit "$_OLD_LOWSPEED_LIMIT" 2>/dev/null; else git config --global --unset http.lowSpeedLimit 2>/dev/null || true; fi
-    if [ -n "$_OLD_LOWSPEED_TIME" ]; then git config --global http.lowSpeedTime "$_OLD_LOWSPEED_TIME" 2>/dev/null; else git config --global --unset http.lowSpeedTime 2>/dev/null || true; fi
 fi
 
 # 2.1 自动应用 macOS utun 核心网络与防丢包补丁
@@ -88,6 +76,17 @@ fi
 if [ -f "${BUILD_DIR}/vpncmd" ]; then
     cp "${BUILD_DIR}/vpncmd" "${PROJECT_DIR}/vpncmd"
     echo "  - 已更新 vpncmd (arm64)"
+fi
+
+# 拷贝核心资源包 (关键! 缺少 hamcore.se2 会导致 vpnclient 找不到配置模板和语言包)
+if [ -f "${BUILD_DIR}/hamcore.se2" ]; then
+    cp "${BUILD_DIR}/hamcore.se2" "${PROJECT_DIR}/hamcore.se2"
+    echo "  - 已更新 hamcore.se2 (核心资源包)"
+elif [ -f "${SRC_DIR}/hamcore.se2" ]; then
+    cp "${SRC_DIR}/hamcore.se2" "${PROJECT_DIR}/hamcore.se2"
+    echo "  - 已从源码目录复制 hamcore.se2 (核心资源包)"
+else
+    echo "  - [Warning] 未找到 hamcore.se2，vpnclient 可能无法正常运行!"
 fi
 
 # 拷贝动态库 (关键! 缺少这些 dylib 会导致 vpnclient/vpncmd 无法启动)

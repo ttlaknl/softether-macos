@@ -30,6 +30,7 @@ struct LogConsoleView: View {
     @EnvironmentObject var engine: SoftEtherEngine
     @State private var cmdInput: String = ""
     @State private var copiedNotice: Bool = false
+    @State private var copyResetTask: Task<Void, Never>? = nil
     
     private let accentCyan = Color(red: 0.0, green: 0.83, blue: 1.0)
     
@@ -155,7 +156,11 @@ struct LogConsoleView: View {
             copiedNotice = true
         }
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        // Cancel previous reset timer to prevent race condition on rapid clicks
+        copyResetTask?.cancel()
+        copyResetTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
             withAnimation {
                 copiedNotice = false
             }
