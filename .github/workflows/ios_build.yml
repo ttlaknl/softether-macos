@@ -2,9 +2,9 @@ name: iOS IPA Build (ARM64 iPhone & NetworkExtension)
 
 on:
   push:
-    branches: [ "dev", "main" ]
+    branches: [ "IOS" ]
   pull_request:
-    branches: [ "dev", "main" ]
+    branches: [ "IOS" ]
   workflow_dispatch:
 
 jobs:
