@@ -125,6 +125,23 @@ cp -f "${APP_FULL}/Info.plist" "${APP_LITE}/Info.plist"
 printf "APPL????" > "${APP_FULL}/PkgInfo"
 printf "APPL????" > "${APP_LITE}/PkgInfo"
 
+# 3.5 编译 iOS AppIcon 图标资源 (Assets.car + AppIcon*.png + CFBundleIcons)
+if [ -d "${SCRIPT_DIR}/SoftEtherUI/iOS/Assets.xcassets" ]; then
+    echo "    正在编译 iOS AppIcon 图标资源..."
+    xcrun actool "${SCRIPT_DIR}/SoftEtherUI/iOS/Assets.xcassets" \
+        --compile "${APP_FULL}" \
+        --platform iphoneos \
+        --minimum-deployment-target 15.0 \
+        --app-icon AppIcon \
+        --output-partial-info-plist "${BUILD_ROOT}/assetcatalog_info.plist"
+    if [ -f "${BUILD_ROOT}/assetcatalog_info.plist" ]; then
+        /usr/libexec/PlistBuddy -c "Merge ${BUILD_ROOT}/assetcatalog_info.plist" "${APP_FULL}/Info.plist"
+    fi
+    cp -f "${APP_FULL}/Info.plist" "${APP_LITE}/Info.plist"
+    cp -f "${APP_FULL}/Assets.car" "${APP_LITE}/Assets.car" 2>/dev/null || true
+    cp -f "${APP_FULL}"/AppIcon*.png "${APP_LITE}/" 2>/dev/null || true
+fi
+
 cat <<EOF > "${EXT_FULL}/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
