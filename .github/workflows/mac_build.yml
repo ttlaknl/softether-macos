@@ -12,18 +12,34 @@ jobs:
     runs-on: macos-latest
 
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Compile SoftEther VPN
-      run: make main
-      
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Checkout SoftEtherVPN Official Source
+      uses: actions/checkout@v4
+      with:
+        repository: SoftEtherVPN/SoftEtherVPN
+        submodules: recursive
+        fetch-depth: 1
+        path: softether_src
+
+    - name: Install build dependencies
+      run: |
+        brew update
+        brew install cmake openssl libsodium readline ncurses
+
+    - name: Compile SoftEther Core (ARM64)
+      run: |
+        export OPENSSL_ROOT_DIR="$(brew --prefix openssl)"
+        make core
+
     - name: Compile and Package UI
       run: make ui
-      
+
     - name: Zip the App Bundle
       run: |
         ditto -c -k --keepParent SoftEtherUI.app SoftEtherUI-macOS.zip
-        
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
