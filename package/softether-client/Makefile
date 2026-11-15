@@ -64,6 +64,12 @@ define Build/Configure
 endef
 
 define Build/Compile
+	mkdir -p \
+		$(PKG_BUILD_DIR)/tmp/objs/Mayaqua \
+		$(PKG_BUILD_DIR)/tmp/objs/Cedar \
+		$(PKG_BUILD_DIR)/tmp/as \
+		$(PKG_BUILD_DIR)/bin/vpnclient \
+		$(PKG_BUILD_DIR)/bin/vpncmd
 	$(MAKE) -C $(PKG_BUILD_DIR) -f $(SOFTETHER_MAK) \
 		CC="$(TARGET_CC)" \
 		OPTIONS_COMPILE="$(TARGET_CFLAGS) $(TARGET_CPPFLAGS) -DNDEBUG -DVPN_SPEED -DUNIX -DUNIX_LINUX -DUNIX_LINUX_MUSL $(if $(CONFIG_ARCH_64BIT),-DCPU_64,) -D_REENTRANT -DREENTRANT -D_THREAD_SAFE -D_THREADSAFE -DTHREAD_SAFE -DTHREADSAFE -D_FILE_OFFSET_BITS=64 -I./src/ -I./src/Cedar/ -I./src/Mayaqua/" \
