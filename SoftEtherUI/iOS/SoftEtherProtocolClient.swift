@@ -302,9 +302,16 @@ public final class SoftEtherTunnelSession {
 
     private var connection: NWConnection?
     private let queue = DispatchQueue(label: "com.softether.ios.session", qos: .userInitiated)
+    private let stopLock = NSLock()
+    private var _isStopped = false
+    private var isStopped: Bool {
+        get { stopLock.lock(); defer { stopLock.unlock() }; return _isStopped }
+        set { stopLock.lock(); defer { stopLock.unlock() }; _isStopped = newValue }
+    }
     private var rxBuffer = Data()
     private var isRunning = false
     private var keepAliveTimer: DispatchSourceTimer?
+    private var pendingHandshake: (sessionName: String, completion: (Result<HandshakeResult, Error>) -> Void)?
 
     // Virtual L2 Adapter MAC & Learned Gateway MAC
     private let myMAC: [UInt8]
@@ -337,6 +344,7 @@ public final class SoftEtherTunnelSession {
     }
 
     public func start(completion: @escaping (Result<HandshakeResult, Error>) -> Void) {
+        isStopped = false
         let tlsOptions = NWProtocolTLS.Options()
         let secOpts = tlsOptions.securityProtocolOptions
         // iOS 13+ API (tls_protocol_version_t). The old sec_protocol_options_set_tls_min_version
@@ -362,7 +370,7 @@ public final class SoftEtherTunnelSession {
 
         var handshakeEntered = false
         conn.stateUpdateHandler = { [weak self] state in
-            guard let self = self else { return }
+            guard let self = self, !self.isStopped else { return }
             switch state {
             case .ready:
                 guard !handshakeEntered else { return }
@@ -382,11 +390,16 @@ public final class SoftEtherTunnelSession {
     }
 
     public func stop() {
-        isRunning = false
-        keepAliveTimer?.cancel()
-        keepAliveTimer = nil
-        connection?.cancel()
-        connection = nil
+        isStopped = true
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            self.isRunning = false
+            self.pendingHandshake = nil
+            self.keepAliveTimer?.cancel()
+            self.keepAliveTimer = nil
+            self.connection?.cancel()
+            self.connection = nil
+        }
     }
 
     // MARK: - SoftEther Handshake (Signature -> Hello -> Auth -> Welcome)
@@ -482,9 +495,11 @@ public final class SoftEtherTunnelSession {
                         return
                     }
                     let sessionName = welcomePack.getStr("session_name") ?? "SID-IOS-ARM64"
+                    guard !self.isStopped else { return }
                     self.log("[Welcome] 认证成功！会话已建立: \(sessionName)")
 
                     self.isRunning = true
+                    self.pendingHandshake = (sessionName: sessionName, completion: completion)
                     self.startKeepAliveTimer()
                     self.startDataStreamLoop()
 
@@ -492,19 +507,9 @@ public final class SoftEtherTunnelSession {
                     self.sendDHCPDiscover()
                     self.sendARPRequest(targetIP: self.gatewayIPBytes)
 
-                    // Wait up to 2.5s for SecureNAT DHCP Offer, or use 192.168.30.18 fallback
-                    self.queue.asyncAfter(deadline: .now() + 2.5) {
-                        let ipStr = self.assignedIPBytes.map(String.init).joined(separator: ".")
-                        let maskStr = self.subnetMaskBytes.map(String.init).joined(separator: ".")
-                        let gwStr = self.gatewayIPBytes.map(String.init).joined(separator: ".")
-                        self.sendGratuitousARP()
-                        completion(.success(HandshakeResult(
-                            sessionName: sessionName,
-                            assignedIP: ipStr,
-                            subnetMask: maskStr,
-                            gatewayIP: gwStr,
-                            dnsServers: ["8.8.8.8", "1.1.1.1"]
-                        )))
+                    // Wait up to 2.5s for SecureNAT DHCP Offer, or complete with 192.168.30.18 fallback
+                    self.queue.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                        self?.completePendingHandshakeIfNeeded()
                     }
                 }
             }
@@ -735,7 +740,24 @@ public final class SoftEtherTunnelSession {
             dhcpCompleted = true
             let ipStr = yiaddr.map(String.init).joined(separator: ".")
             log("[DHCP] 从 SecureNAT 分配到内网 IP: \(ipStr)")
+            completePendingHandshakeIfNeeded()
         }
+    }
+
+    private func completePendingHandshakeIfNeeded() {
+        guard !isStopped, isRunning, let pending = pendingHandshake else { return }
+        pendingHandshake = nil
+        let ipStr = assignedIPBytes.map(String.init).joined(separator: ".")
+        let maskStr = subnetMaskBytes.map(String.init).joined(separator: ".")
+        let gwStr = gatewayIPBytes.map(String.init).joined(separator: ".")
+        sendGratuitousARP()
+        pending.completion(.success(HandshakeResult(
+            sessionName: pending.sessionName,
+            assignedIP: ipStr,
+            subnetMask: maskStr,
+            gatewayIP: gwStr,
+            dnsServers: ["8.8.8.8", "1.1.1.1"]
+        )))
     }
 
     private static func ipv4HeaderChecksum(_ header: Data) -> UInt16 {

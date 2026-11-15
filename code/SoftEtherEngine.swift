@@ -172,7 +172,7 @@ public class SoftEtherEngine: ObservableObject {
            let decoded = try? JSONDecoder().decode([VPNServerConfig].self, from: data),
            !decoded.isEmpty {
             self.configs = decoded
-            self.currentConfig = configs.first
+            self.currentConfig = configs.first(where: { $0.isSelected }) ?? configs.first
             appendLog("[Config] 已加载 \(decoded.count) 个保存的节点")
         } else {
             self.configs = [
@@ -594,14 +594,27 @@ public class SoftEtherEngine: ObservableObject {
 
     #if os(iOS)
     private var iosDirectSession: SoftEtherTunnelSession?
+    private var activeNEManager: NETunnelProviderManager?
+    private var neStatusObserver: NSObjectProtocol?
+    private var neAssignedIPLogged = false
+    private var neConnectedLogged = false
+    private var neHasEnteredConnectingOrConnected = false
+    private var lastIOSTotalSent: UInt64 = 0
+    private var lastIOSTotalRecv: UInt64 = 0
 
     private func startIOSNetworkExtensionConnection(config: VPNServerConfig) {
         self.activeRouteHost = config.host
+        self.neAssignedIPLogged = false
+        self.neConnectedLogged = false
+        self.neHasEnteredConnectingOrConnected = false
+        self.lastIOSTotalSent = 0
+        self.lastIOSTotalRecv = 0
         let bundleId = Bundle.main.bundleIdentifier ?? "org.softether.SoftEtherUI"
         let providerId = "\(bundleId).PacketTunnel"
 
-        NETunnelProviderManager.loadAllFromPreferences { managers, error in
-            Task { @MainActor in
+        NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, error in
+            Task { @MainActor [weak self] in
+                guard let self = self, self.state == .connecting else { return }
                 if let err = error {
                     self.appendLog("[iOS Notice] NEPreferences 不可用 (\(err.localizedDescription))，自动切换为内置 SSL-VPN 直连引擎...")
                     self.startIOSDirectSessionFallback(config: config)
@@ -620,24 +633,32 @@ public class SoftEtherEngine: ObservableObject {
                 manager.protocolConfiguration = protocolConfiguration
                 manager.localizedDescription = "SoftEther VPN"
                 manager.isEnabled = true
-                manager.saveToPreferences { saveErr in
-                    Task { @MainActor in
+                manager.saveToPreferences { [weak self] saveErr in
+                    Task { @MainActor [weak self] in
+                        guard let self = self, self.state == .connecting else { return }
                         if let sErr = saveErr {
-                            self.appendLog("[iOS Notice] 当前个人证书不含 NetworkExtension 权限 (\(sErr.localizedDescription))")
+                            self.appendLog("[iOS Notice] 当前证书或权限未能保存 VPN 配置 (\(sErr.localizedDescription))")
                             self.appendLog("[iOS Fallback] 正在启动免权限内置 SSL-VPN 协议栈直连 \(config.host):\(config.port)...")
                             self.startIOSDirectSessionFallback(config: config)
                             return
                         }
-                        manager.loadFromPreferences { _ in
-                            Task { @MainActor in
+                        manager.loadFromPreferences { [weak self] _ in
+                            Task { @MainActor [weak self] in
+                                guard let self = self, self.state == .connecting else { return }
+                                self.activeNEManager = manager
+                                self.observeNEStatus(manager: manager, config: config)
                                 do {
                                     try manager.connection.startVPNTunnel()
-                                    self.state = .connected
-                                    self.assignedIP = "192.168.30.x (NE)"
-                                    self.appendLog("[iOS Success] NetworkExtension 全局隧道已启动 -> \(config.host):\(config.port)")
+                                    self.assignedIP = "协商中 (NE)..."
+                                    self.appendLog("[iOS NE] 正在激活 NetworkExtension 全局隧道 -> \(config.host):\(config.port)...")
                                     self.startTrafficMetricsTimer()
-                                    self.queryExtensionAssignedIP(manager: manager)
+                                    let initialStatus = manager.connection.status
+                                    if initialStatus == .connected || initialStatus == .connecting || initialStatus == .reasserting {
+                                        self.handleNEStatusUpdate(initialStatus, config: config)
+                                    }
                                 } catch {
+                                    self.removeNEStatusObserver()
+                                    self.activeNEManager = nil
                                     self.appendLog("[iOS Notice] 系统拒绝启动 NE 插件 (\(error.localizedDescription))，切换为内置直连模式...")
                                     self.startIOSDirectSessionFallback(config: config)
                                 }
@@ -649,24 +670,115 @@ public class SoftEtherEngine: ObservableObject {
         }
     }
 
-    private func queryExtensionAssignedIP(manager: NETunnelProviderManager) {
+    private func observeNEStatus(manager: NETunnelProviderManager, config: VPNServerConfig) {
+        removeNEStatusObserver()
+        neStatusObserver = NotificationCenter.default.addObserver(
+            forName: .NEVPNStatusDidChange,
+            object: manager.connection,
+            queue: .main
+        ) { [weak self, weak manager] _ in
+            guard let self = self, let manager = manager else { return }
+            Task { @MainActor in
+                self.handleNEStatusUpdate(manager.connection.status, config: config)
+            }
+        }
+    }
+
+    private func removeNEStatusObserver() {
+        if let obs = neStatusObserver {
+            NotificationCenter.default.removeObserver(obs)
+            neStatusObserver = nil
+        }
+    }
+
+    private func handleNEStatusUpdate(_ neStatus: NEVPNStatus, config: VPNServerConfig) {
+        guard iosDirectSession == nil else { return }
+        switch neStatus {
+        case .connecting, .reasserting:
+            neHasEnteredConnectingOrConnected = true
+        case .connected:
+            neHasEnteredConnectingOrConnected = true
+            if state == .connecting || state == .connected {
+                if state == .connecting {
+                    connectedDurationSec = 0
+                }
+                state = .connected
+                if !neConnectedLogged {
+                    neConnectedLogged = true
+                    appendLog("[iOS Success] NetworkExtension 全局隧道已启动 -> \(config.host):\(config.port)")
+                }
+                pollIOSExtensionStatus()
+            }
+        case .disconnected, .invalid:
+            if state == .connected || (state == .connecting && neHasEnteredConnectingOrConnected) {
+                let wasConnecting = (state == .connecting)
+                stopTrafficMetricsTimer()
+                removeNEStatusObserver()
+                activeNEManager = nil
+                state = wasConnecting ? .error : .disconnected
+                assignedIP = wasConnecting ? "隧道启动失败" : "未分配"
+                activeRouteHost = nil
+                appendLog(wasConnecting ? "[iOS Error] NetworkExtension 隧道未能建立连接，已退出" : "[iOS NE] NetworkExtension 隧道已断开")
+            }
+        default:
+            break
+        }
+    }
+
+    private func pollIOSExtensionStatus() {
+        guard let manager = activeNEManager else { return }
+        if manager.connection.status == .connected, let config = currentConfig, !neConnectedLogged {
+            handleNEStatusUpdate(.connected, config: config)
+        }
         guard let session = manager.connection as? NETunnelProviderSession,
               let msg = "status".data(using: .utf8) else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-            try? session.sendProviderMessage(msg) { response in
-                guard let data = response,
-                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String],
-                      let ip = dict["assignedIP"], !ip.isEmpty else { return }
-                Task { @MainActor in
+        try? session.sendProviderMessage(msg) { [weak self] response in
+            guard let data = response,
+                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return }
+            Task { @MainActor [weak self] in
+                guard let self = self, self.iosDirectSession == nil,
+                      self.state == .connected || self.state == .connecting else { return }
+                let isRunning = (dict["running"] == "true")
+                if isRunning, let ip = dict["assignedIP"], !ip.isEmpty {
+                    if self.state == .connecting {
+                        self.connectedDurationSec = 0
+                        self.state = .connected
+                        if !self.neConnectedLogged, let cfg = self.currentConfig {
+                            self.neConnectedLogged = true
+                            self.appendLog("[iOS Success] NetworkExtension 全局隧道已启动 -> \(cfg.host):\(cfg.port)")
+                        }
+                    }
                     self.assignedIP = ip
-                    self.appendLog("[iOS NE] 虚拟网卡已绑定内网 IP: \(ip)")
+                    if !self.neAssignedIPLogged {
+                        self.neAssignedIPLogged = true
+                        self.appendLog("[iOS NE] 虚拟网卡已绑定内网 IP: \(ip)")
+                    }
+                }
+                if let sent = UInt64(dict["bytesSent"] ?? ""),
+                   let recv = UInt64(dict["bytesRecv"] ?? "") {
+                    self.updateIOSTrafficMetrics(bytesSent: sent, bytesRecv: recv)
                 }
             }
         }
     }
 
+    private func updateIOSTrafficMetrics(bytesSent: UInt64, bytesRecv: UInt64) {
+        let deltaSent = bytesSent >= lastIOSTotalSent ? (bytesSent - lastIOSTotalSent) : 0
+        let deltaRecv = bytesRecv >= lastIOSTotalRecv ? (bytesRecv - lastIOSTotalRecv) : 0
+        lastIOSTotalSent = bytesSent
+        lastIOSTotalRecv = bytesRecv
+        traffic.uploadSpeedKbps = (Double(deltaSent) / 1.5) / 1024.0
+        traffic.downloadSpeedKbps = (Double(deltaRecv) / 1.5) / 1024.0
+        traffic.totalSentMB = Double(bytesSent) / (1024.0 * 1024.0)
+        traffic.totalRecvMB = Double(bytesRecv) / (1024.0 * 1024.0)
+    }
+
     private func startIOSDirectSessionFallback(config: VPNServerConfig) {
         iosDirectSession?.stop()
+        removeNEStatusObserver()
+        activeNEManager = nil
+        lastIOSTotalSent = 0
+        lastIOSTotalRecv = 0
         let session = SoftEtherTunnelSession(
             host: config.host,
             port: UInt16(clamping: config.port),
@@ -679,9 +791,12 @@ public class SoftEtherEngine: ObservableObject {
         }
         self.iosDirectSession = session
 
-        session.start { [weak self] result in
-            Task { @MainActor in
-                guard let self = self else { return }
+        session.start { [weak self, weak session] result in
+            Task { @MainActor [weak self] in
+                guard let self = self,
+                      let session = session,
+                      self.iosDirectSession === session,
+                      self.state == .connecting else { return }
                 switch result {
                 case .success(let info):
                     self.state = .connected
@@ -689,6 +804,7 @@ public class SoftEtherEngine: ObservableObject {
                     self.appendLog("[iOS Direct] 握手成功！会话: \(info.sessionName)，分配 IP: \(info.assignedIP)")
                     self.startTrafficMetricsTimer()
                 case .failure(let err):
+                    self.iosDirectSession = nil
                     self.state = .error
                     self.assignedIP = "连接失败"
                     self.appendLog("[iOS Error] SSL-VPN 握手失败: \(err.localizedDescription)")
@@ -698,8 +814,13 @@ public class SoftEtherEngine: ObservableObject {
     }
 
     private func stopIOSNetworkExtensionConnection() {
+        removeNEStatusObserver()
         iosDirectSession?.stop()
         iosDirectSession = nil
+        activeNEManager?.connection.stopVPNTunnel()
+        activeNEManager = nil
+        neAssignedIPLogged = false
+        neConnectedLogged = false
         NETunnelProviderManager.loadAllFromPreferences { managers, _ in
             managers?.first?.connection.stopVPNTunnel()
         }
@@ -718,10 +839,18 @@ public class SoftEtherEngine: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self else { return }
+                #if os(iOS)
+                if let direct = self.iosDirectSession {
+                    self.updateIOSTrafficMetrics(bytesSent: direct.totalBytesSent, bytesRecv: direct.totalBytesRecv)
+                } else {
+                    self.pollIOSExtensionStatus()
+                }
+                #else
                 self.traffic.uploadSpeedKbps = Double.random(in: 120.0...850.0)
                 self.traffic.downloadSpeedKbps = Double.random(in: 1500.0...12800.0)
                 self.traffic.totalSentMB += (self.traffic.uploadSpeedKbps * 1.5) / 1024.0 / 8.0
                 self.traffic.totalRecvMB += (self.traffic.downloadSpeedKbps * 1.5) / 1024.0 / 8.0
+                #endif
             }
         }
     }

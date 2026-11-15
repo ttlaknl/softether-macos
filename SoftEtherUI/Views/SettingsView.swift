@@ -15,9 +15,15 @@ struct SettingsView: View {
                     Text("高级首选项")
                         .font(.system(size: 22, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
+                    #if os(iOS)
+                    Text("针对 iPhone / iPad (ARM64) 的网络协议栈与诊断配置")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.6))
+                    #else
                     Text("针对 Apple Silicon (M系列 CPU) 的平台优化配置")
                         .font(.caption)
                         .foregroundColor(.white.opacity(0.6))
+                    #endif
                 }
                 
                 sectionCard(title: "安全与隐蔽防护", icon: "shield.hightarget") {
@@ -42,6 +48,17 @@ struct SettingsView: View {
                         
                         Divider().background(Color.white.opacity(0.08))
                         
+                        #if os(iOS)
+                        VStack(alignment: .leading, spacing: 8) {
+                            settingLabel(title: "数据流对称加密算法", description: "硬件级 NEON 向量指令集加速")
+                            Picker("", selection: $engine.settings.selectedCipher) {
+                                Text("AES-256-GCM").tag("AES-256-GCM")
+                                Text("AES-128-GCM").tag("AES-128-GCM")
+                                Text("ChaCha20-Poly1305").tag("ChaCha20-Poly1305")
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                        }
+                        #else
                         HStack {
                             settingLabel(title: "数据流对称加密算法", description: "硬件级 NEON 向量指令集加速")
                             Spacer()
@@ -53,9 +70,22 @@ struct SettingsView: View {
                             .pickerStyle(MenuPickerStyle())
                             .frame(width: 160)
                         }
+                        #endif
                         
                         Divider().background(Color.white.opacity(0.08))
                         
+                        #if os(iOS)
+                        VStack(alignment: .leading, spacing: 8) {
+                            settingLabel(title: "最大 TCP 并发通道数", description: "高延迟链路推荐 4-8 通道突破拥塞窗口，低延迟专线选 1")
+                            Picker("", selection: $engine.settings.maxTCPChannels) {
+                                Text("1").tag(1)
+                                Text("2").tag(2)
+                                Text("4").tag(4)
+                                Text("8").tag(8)
+                            }
+                            .pickerStyle(SegmentedPickerStyle())
+                        }
+                        #else
                         HStack {
                             settingLabel(title: "最大 TCP 并发通道数", description: "高延迟链路推荐 4-8 通道突破拥塞窗口，低延迟专线选 1")
                             Spacer()
@@ -68,6 +98,7 @@ struct SettingsView: View {
                             .pickerStyle(SegmentedPickerStyle())
                             .frame(width: 200)
                         }
+                        #endif
                     }
                 }
                 
@@ -106,7 +137,11 @@ struct SettingsView: View {
                     }
                 }
             }
+            #if os(iOS)
+            .padding(16)
+            #else
             .padding(24)
+            #endif
         }
     }
     
@@ -136,9 +171,17 @@ struct SettingsView: View {
     
     private func infoRow(label: String, value: String) -> some View {
         HStack {
-            Text(label).font(.system(size: 12)).foregroundColor(.white.opacity(0.5))
-            Spacer()
-            Text(value).font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundColor(accentCyan)
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.5))
+                .fixedSize(horizontal: true, vertical: false)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundColor(accentCyan)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .multilineTextAlignment(.trailing)
         }
     }
 }

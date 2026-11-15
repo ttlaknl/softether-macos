@@ -37,6 +37,26 @@ struct LogConsoleView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Header
+            #if os(iOS)
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("控制台与日志 Terminal")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("查看运行日志（支持长按选中复制或一键复制）")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.6))
+                }
+                
+                HStack(spacing: 10) {
+                    copyAllLogsButton
+                    clearLogsButton
+                    Spacer()
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            #else
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("控制台与日志 Terminal")
@@ -48,38 +68,12 @@ struct LogConsoleView: View {
                 }
                 Spacer()
                 
-                // Copy All Logs Button
-                Button(action: copyAllLogs) {
-                    HStack(spacing: 4) {
-                        Image(systemName: copiedNotice ? "checkmark" : "doc.on.doc")
-                        Text(copiedNotice ? "已复制" : "复制全部日志")
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(copiedNotice ? accentCyan : .white.opacity(0.8))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.08))
-                    .cornerRadius(6)
-                }
-                .buttonStyle(PlainButtonStyle())
-                
-                // Clear Logs Button
-                Button(action: { engine.logs.removeAll() }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "trash")
-                        Text("清空日志")
-                    }
-                    .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.6))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.06))
-                    .cornerRadius(6)
-                }
-                .buttonStyle(PlainButtonStyle())
+                copyAllLogsButton
+                clearLogsButton
             }
             .padding(.horizontal, 24)
             .padding(.top, 24)
+            #endif
             
             // Console Terminal Output Window (Selectable Text)
             ScrollViewReader { proxy in
@@ -102,7 +96,11 @@ struct LogConsoleView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
+                #if os(iOS)
+                .padding(.horizontal, 16)
+                #else
                 .padding(.horizontal, 24)
+                #endif
                 .onChange(of: engine.logs.count) { _ in
                     if !engine.logs.isEmpty {
                         proxy.scrollTo(engine.logs.count - 1, anchor: .bottom)
@@ -116,7 +114,7 @@ struct LogConsoleView: View {
                     .font(.system(size: 13, weight: .bold, design: .monospaced))
                     .foregroundColor(accentCyan)
                 
-                TextField("输入命令 (例如: AccountList / AccountConnect)", text: $cmdInput)
+                TextField("输入命令 (例如: AccountList)", text: $cmdInput)
                     .textFieldStyle(PlainTextFieldStyle())
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundColor(.white)
@@ -125,6 +123,8 @@ struct LogConsoleView: View {
                 Button(action: executeCmd) {
                     Text("发送")
                         .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(accentCyan)
@@ -136,9 +136,50 @@ struct LogConsoleView: View {
             .padding(12)
             .background(Color.white.opacity(0.05))
             .cornerRadius(10)
+            #if os(iOS)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
+            #else
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
+            #endif
         }
+    }
+    
+    private var copyAllLogsButton: some View {
+        Button(action: copyAllLogs) {
+            HStack(spacing: 4) {
+                Image(systemName: copiedNotice ? "checkmark" : "doc.on.doc")
+                Text(copiedNotice ? "已复制" : "复制全部日志")
+            }
+            .font(.system(size: 12, weight: .medium))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundColor(copiedNotice ? accentCyan : .white.opacity(0.8))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.white.opacity(0.08))
+            .cornerRadius(6)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private var clearLogsButton: some View {
+        Button(action: { engine.logs.removeAll() }) {
+            HStack(spacing: 4) {
+                Image(systemName: "trash")
+                Text("清空日志")
+            }
+            .font(.system(size: 12))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundColor(.white.opacity(0.6))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.white.opacity(0.06))
+            .cornerRadius(6)
+        }
+        .buttonStyle(PlainButtonStyle())
     }
     
     private func copyAllLogs() {
@@ -174,11 +215,14 @@ struct LogConsoleView: View {
         cmdInput = ""
         
         // Execute manual command
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             if command.lowercased().contains("accountlist") {
+                let statusText = engine.state == .connected ? "Connected" : "Offline"
+                let hostPort = engine.currentConfig.map { "\($0.host):\($0.port)" } ?? "N/A"
+                let hub = engine.currentConfig?.hub ?? "N/A"
                 engine.appendLog("AccountName | Status    | ServerAddress          | Hub")
                 engine.appendLog("------------+-----------+------------------------+-------")
-                engine.appendLog("SOFTETHER   | Connected | 154.13.4.209:992       | VPNGATE")
+                engine.appendLog("SOFTETHER   | \(statusText) | \(hostPort) | \(hub)")
             } else {
                 engine.appendLog("Command executed via vpncmd.")
             }

@@ -153,9 +153,10 @@ public struct MainView: View {
             VStack(spacing: 28) {
                 // Header Status Text
                 VStack(spacing: 6) {
-                    Text(engine.state == .connected ? "加密隧道已开启 • 服务端已上线" : "防护未开启")
-                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                    Text(engine.state == .connected ? "加密隧道已开启 • 服务端已上线" : (engine.state == .connecting ? "正在建立加密隧道..." : "防护未开启"))
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
                     
                     if let current = engine.currentConfig {
                         HStack(spacing: 6) {
@@ -164,9 +165,12 @@ public struct MainView: View {
                             Text("目标节点: \(current.name) (\(current.host):\(current.port))")
                                 .font(.system(size: 13))
                                 .foregroundColor(.white.opacity(0.7))
+                                .lineLimit(2)
+                                .multilineTextAlignment(.center)
                         }
                     }
                 }
+                .padding(.horizontal, 16)
                 .padding(.top, 24)
                 
                 // Big Connect Button with Animated Pulsing Glow
@@ -211,7 +215,7 @@ public struct MainView: View {
                                     .font(.system(size: 38, weight: .bold))
                                     .foregroundColor(engine.state == .connected ? accentEmerald : accentCyan)
                                 
-                                Text(engine.state == .connected ? "断开" : "一键连接")
+                                Text(engine.state == .connected ? "断开" : (engine.state == .connecting ? "取消" : "一键连接"))
                                     .font(.system(size: 14, weight: .bold))
                                     .foregroundColor(.white)
                             }
@@ -221,38 +225,47 @@ public struct MainView: View {
                 }
                 
                 // Assigned IP Address Card
-                HStack(spacing: 20) {
-                    HStack(spacing: 8) {
+                HStack(spacing: 14) {
+                    HStack(spacing: 6) {
                         Image(systemName: "network")
                             .foregroundColor(accentCyan)
                         Text("客户端 IP:")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.white.opacity(0.6))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                         Text(engine.assignedIP)
-                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
                             .foregroundColor(engine.state == .connected ? accentEmerald : .white.opacity(0.8))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
                     }
                     
                     Divider().frame(height: 16).background(Color.white.opacity(0.1))
                     
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Image(systemName: "timer")
                             .foregroundColor(accentEmerald)
                         Text("保护时长:")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.white.opacity(0.6))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                         Text(engine.formattedDuration)
-                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
                             .foregroundColor(.white.opacity(0.9))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .background(Color.white.opacity(0.05))
                 .cornerRadius(20)
+                .padding(.horizontal, 12)
                 
                 // Real-time Traffic Cards
-                HStack(spacing: 16) {
+                HStack(spacing: 12) {
                     trafficCard(
                         title: "实时下载速率",
                         value: String(format: "%.1f KB/s", engine.traffic.downloadSpeedKbps),
@@ -269,7 +282,11 @@ public struct MainView: View {
                         color: accentEmerald
                     )
                 }
+                #if os(iOS)
+                .padding(.horizontal, 16)
+                #else
                 .padding(.horizontal, 24)
+                #endif
                 .padding(.bottom, 24)
             }
         }
@@ -284,12 +301,16 @@ public struct MainView: View {
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white.opacity(0.6))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 Spacer()
             }
             
             Text(value)
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .font(.system(size: 19, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
             
             HStack {
                 Text("累计流量:")
