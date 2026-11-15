@@ -21,10 +21,10 @@ jobs:
             target: x86-64
             ver: "23.05.3"
           - arch: aarch64
-            target: armvirt-64
+            target: armsr-armv8
             ver: "23.05.3"
           - arch: arm_cortex-a7
-            target: armvirt-32
+            target: armsr-armv7
             ver: "23.05.3"
 
     steps:
@@ -34,14 +34,15 @@ jobs:
       - name: Build with Official OpenWrt SDK Container
         run: |
           mkdir -p bin/${{ matrix.arch }}
+          chmod 777 bin/${{ matrix.arch }}
           docker run --rm \
             -v "${{ github.workspace }}/package:/builder/package/custom:ro" \
             -v "${{ github.workspace }}/bin/${{ matrix.arch }}:/builder/bin/packages:rw" \
             openwrt/sdk:${{ matrix.target }}-v${{ matrix.ver }} \
             bash -c "
               set -e
-              ./scripts/feeds update -a || true
-              ./scripts/feeds install -a || true
+              ./scripts/feeds update -a
+              ./scripts/feeds install -a
               make defconfig
               echo 'CONFIG_PACKAGE_softether-client=m' >> .config
               echo 'CONFIG_PACKAGE_luci-app-softether-client=m' >> .config

@@ -71,16 +71,16 @@ case "${TARGET_ARCH}" in
         build_arch "x86_64" "openwrt/sdk:x86-64-v${VERSION}"
         ;;
     arm64|aarch64)
-        build_arch "aarch64" "openwrt/sdk:armvirt-64-v${VERSION}"
+        build_arch "aarch64" "openwrt/sdk:armsr-armv8-v${VERSION}"
         ;;
     arm|armv7|cortex-a7)
-        build_arch "arm_cortex-a7" "openwrt/sdk:armvirt-32-v${VERSION}"
+        build_arch "arm_cortex-a7" "openwrt/sdk:armsr-armv7-v${VERSION}"
         ;;
     all)
         echo "Building all architectures..."
         build_arch "x86_64" "openwrt/sdk:x86-64-v${VERSION}"
-        build_arch "aarch64" "openwrt/sdk:armvirt-64-v${VERSION}"
-        build_arch "arm_cortex-a7" "openwrt/sdk:armvirt-32-v${VERSION}"
+        build_arch "aarch64" "openwrt/sdk:armsr-armv8-v${VERSION}"
+        build_arch "arm_cortex-a7" "openwrt/sdk:armsr-armv7-v${VERSION}"
         ;;
     *)
         echo "Unknown architecture: ${TARGET_ARCH}"

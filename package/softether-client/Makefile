@@ -31,7 +31,6 @@ define Package/softether-client
   TITLE:=SoftEther VPN Client for OpenWrt
   URL:=https://www.softether.org/
   DEPENDS:=+libpthread +librt +libreadline +libopenssl +libncurses +kmod-tun +zlib +ip-full +ca-certificates
-  PROVIDES:=luci-app-softether-client
 endef
 
 define Package/softether-client/description
@@ -45,16 +44,15 @@ define Package/softether-client/conffiles
 /etc/config/softether_client
 endef
 
-# Tune CFLAGS for target architecture and musl libc
+# Tune CFLAGS for target architecture, musl libc, and modern GCC (OpenWrt 23.05 / GCC 12+)
 TARGET_CFLAGS += \
 	$(if $(CONFIG_OPENSSL_WITH_SSL3),,-DSSL_OP_NO_SSLv3) \
 	$(if $(filter mips mipsel,$(ARCH)),-minterlink-mips16) \
-	-DUNIX -DOS_UNIX -DUNIX_LINUX -DUNIX_LINUX_MUSL -fsigned-char
+	-DUNIX -DOS_UNIX -DUNIX_LINUX -DUNIX_LINUX_MUSL -fsigned-char \
+	-std=gnu99 -fpermissive -Wno-error -w
 
-# Select 32-bit or 64-bit Makefile depending on target architecture
-MAKE_FLAGS += \
-	-f src/makefiles/linux_$(if $(CONFIG_ARCH_64BIT),64,32)bit.mak \
-	CC="$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_CPPFLAGS) $(TARGET_LDFLAGS)"
+# Select 32-bit or 64-bit _nobits Makefile (avoids hardcoded -m64/-m32 on ARM)
+SOFTETHER_MAK := src/makefiles/linux_$(if $(CONFIG_ARCH_64BIT),64,32)bit_nobits.mak
 
 define Build/Configure
 	# Provide prebuilt hamcore.se2 to avoid host compilation of hamcorebuilder
@@ -62,8 +60,15 @@ define Build/Configure
 	if [ -f files/hamcore.se2 ]; then \
 		$(CP) files/hamcore.se2 $(PKG_BUILD_DIR)/src/bin/BuiltHamcoreFiles/unix/hamcore.se2; \
 	fi
-	# Set modtime to future to prevent make from attempting to rebuild hamcore.se2
-	touch -d "+1 day" $(PKG_BUILD_DIR)/src/bin/BuiltHamcoreFiles/unix/hamcore.se2 2>/dev/null || true
+	touch -t 203501010000 $(PKG_BUILD_DIR)/src/bin/BuiltHamcoreFiles/unix/hamcore.se2 2>/dev/null || true
+endef
+
+define Build/Compile
+	$(MAKE) -C $(PKG_BUILD_DIR) -f $(SOFTETHER_MAK) \
+		CC="$(TARGET_CC)" \
+		OPTIONS_COMPILE="$(TARGET_CFLAGS) $(TARGET_CPPFLAGS) -DNDEBUG -DVPN_SPEED -DUNIX -DUNIX_LINUX -DUNIX_LINUX_MUSL $(if $(CONFIG_ARCH_64BIT),-DCPU_64,) -D_REENTRANT -DREENTRANT -D_THREAD_SAFE -D_THREADSAFE -DTHREAD_SAFE -DTHREADSAFE -D_FILE_OFFSET_BITS=64 -I./src/ -I./src/Cedar/ -I./src/Mayaqua/" \
+		OPTIONS_LINK="$(TARGET_LDFLAGS) -lm -ldl -lrt -lpthread -lssl -lcrypto -lreadline -lncurses -lz" \
+		bin/vpnclient/vpnclient bin/vpncmd/vpncmd
 endef
 
 define Package/softether-client/install
