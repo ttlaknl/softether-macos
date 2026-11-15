@@ -7,6 +7,7 @@ struct ServerConfigView: View {
     @EnvironmentObject var engine: SoftEtherEngine
     @State private var showingSheet = false
     @State private var editingConfig: VPNServerConfig? = nil
+    @State private var isPasswordVisible: Bool = false
     
     // Form Input State
     @State private var nodeName = ""
@@ -168,12 +169,16 @@ struct ServerConfigView: View {
             
             // Edit Button
             Button(action: { openEditModal(config: config) }) {
-                Image(systemName: "pencil")
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.7))
-                    .padding(8)
-                    .background(Color.white.opacity(0.06))
-                    .cornerRadius(6)
+                HStack(spacing: 4) {
+                    Image(systemName: "pencil")
+                    Text("编辑")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.white.opacity(0.08))
+                .foregroundColor(.white.opacity(0.9))
+                .cornerRadius(6)
             }
             .buttonStyle(PlainButtonStyle())
             
@@ -202,22 +207,66 @@ struct ServerConfigView: View {
                 }
                 
                 VStack(alignment: .leading, spacing: 14) {
-                    inputField(title: "节点名称", placeholder: "例如: 团队测试服务器", text: $nodeName)
+                    inputField(title: "节点名称", placeholder: "例如: 默认服务器 (154.13.4.209)", text: $nodeName)
                     inputField(title: "服务器主机 (Host/IP)", placeholder: "154.13.4.209", text: $nodeHost)
                     if !hostValidationError.isEmpty {
                         Text(hostValidationError)
                             .font(.caption)
                             .foregroundColor(accentRed)
                     }
-                    inputField(title: "服务端口 (Port)", placeholder: "443", text: $nodePort, isNumeric: true)
+                    inputField(title: "服务端口 (Port)", placeholder: "992", text: $nodePort, isNumeric: true)
                     if !portValidationError.isEmpty {
                         Text(portValidationError)
                             .font(.caption)
                             .foregroundColor(accentRed)
                     }
-                    inputField(title: "虚拟 Hub 名称", placeholder: "VPNGATE", text: $nodeHub)
-                    inputField(title: "验证用户名", placeholder: "laknl", text: $nodeUsername)
-                    inputField(title: "验证密码", placeholder: "输入密码", text: $nodePassword, isSecure: true)
+                    inputField(title: "虚拟 Hub 名称", placeholder: "VPN", text: $nodeHub)
+                    inputField(title: "验证用户名", placeholder: "ios", text: $nodeUsername)
+                    
+                    // Password Field with Visibility Toggle
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("验证密码")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.6))
+                            Spacer()
+                            Button(action: { isPasswordVisible.toggle() }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: isPasswordVisible ? "eye.slash" : "eye")
+                                    Text(isPasswordVisible ? "隐藏密码" : "显示密码")
+                                }
+                                .font(.system(size: 11))
+                                .foregroundColor(accentCyan)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                        
+                        if isPasswordVisible {
+                            TextField("输入密码", text: $nodePassword)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                #if os(iOS)
+                                .autocapitalization(.none)
+                                .disableAutocorrection(true)
+                                #endif
+                        } else {
+                            SecureField("输入密码", text: $nodePassword)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                        }
+                    }
+                }
+                
+                if !isFormValid {
+                    let trimmedH = nodeHost.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let trimmedP = nodePort.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmedH.isEmpty {
+                        Text("• 请输入服务器主机地址 (Host/IP)")
+                            .font(.caption)
+                            .foregroundColor(accentRed)
+                    } else if Int(trimmedP) == nil || Int(trimmedP)! <= 0 || Int(trimmedP)! > 65535 {
+                        Text("• 端口号必须是 1 到 65535 之间的有效数字")
+                            .font(.caption)
+                            .foregroundColor(accentRed)
+                    }
                 }
                 
                 HStack {
@@ -265,7 +314,7 @@ struct ServerConfigView: View {
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .autocapitalization(.none)
                     .disableAutocorrection(true)
-                    .keyboardType(isNumeric ? .numberPad : .default)
+                    .keyboardType(isNumeric ? .numbersAndPunctuation : .default)
                 #else
                 TextField(placeholder, text: text)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -276,21 +325,23 @@ struct ServerConfigView: View {
     
     // MARK: - Validation
     private var isFormValid: Bool {
-        let trimmedHost = nodeHost.trimmingCharacters(in: .whitespaces)
+        let trimmedHost = nodeHost.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedHost.isEmpty else { return false }
-        guard let port = Int(nodePort), port > 0, port <= 65535 else { return false }
+        let trimmedPort = nodePort.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let port = Int(trimmedPort), port > 0, port <= 65535 else { return false }
         return true
     }
     
     // MARK: - Actions
     private func openAddModal() {
         editingConfig = nil
+        isPasswordVisible = false
         nodeName = ""
         nodeHost = ""
-        nodePort = "443"
-        nodeHub = "VPNGATE"
-        nodeUsername = "vpn"
-        nodePassword = "vpn"
+        nodePort = "992"
+        nodeHub = "VPN"
+        nodeUsername = "ios"
+        nodePassword = ""
         hostValidationError = ""
         portValidationError = ""
         showingSheet = true
@@ -298,6 +349,7 @@ struct ServerConfigView: View {
     
     private func openEditModal(config: VPNServerConfig) {
         editingConfig = config
+        isPasswordVisible = false
         nodeName = config.name
         nodeHost = config.host
         nodePort = "\(config.port)"
@@ -314,20 +366,24 @@ struct ServerConfigView: View {
         hostValidationError = ""
         portValidationError = ""
         
-        let trimmedHost = nodeHost.trimmingCharacters(in: .whitespaces)
+        let trimmedHost = nodeHost.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedHost.isEmpty {
             hostValidationError = "服务器地址不能为空"
             return
         }
         
-        guard let portInt = Int(nodePort), portInt > 0, portInt <= 65535 else {
+        let trimmedPort = nodePort.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let portInt = Int(trimmedPort), portInt > 0, portInt <= 65535 else {
             portValidationError = "端口号必须在 1-65535 之间"
             return
         }
         
-        let finalName = nodeName.trimmingCharacters(in: .whitespaces).isEmpty ? trimmedHost : nodeName.trimmingCharacters(in: .whitespaces)
-        let trimmedHub = nodeHub.trimmingCharacters(in: .whitespaces)
-        let trimmedUser = nodeUsername.trimmingCharacters(in: .whitespaces)
+        let rawName = nodeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = rawName.isEmpty ? trimmedHost : rawName
+        let trimmedHub = nodeHub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedUser = nodeUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalHub = trimmedHub.isEmpty ? "VPN" : trimmedHub
+        let finalUser = trimmedUser.isEmpty ? "vpn" : trimmedUser
         
         if let editing = editingConfig {
             // Update existing item
@@ -335,24 +391,35 @@ struct ServerConfigView: View {
                 engine.configs[index].name = finalName
                 engine.configs[index].host = trimmedHost
                 engine.configs[index].port = portInt
-                engine.configs[index].hub = trimmedHub
-                engine.configs[index].username = trimmedUser
+                engine.configs[index].hub = finalHub
+                engine.configs[index].username = finalUser
                 engine.configs[index].password = nodePassword
 
                 if engine.currentConfig?.id == editing.id {
                     engine.currentConfig = engine.configs[index]
                 }
-                engine.appendLog("[Config] 更新节点: \(finalName)")
+                engine.appendLog("[Config] 更新节点: \(finalName) (\(trimmedHost):\(portInt), User: \(finalUser))")
             }
         } else {
-            // Create new item
-            let shouldSelect = engine.currentConfig == nil
-            let newConfig = VPNServerConfig(name: finalName, host: trimmedHost, port: portInt, hub: trimmedHub, username: trimmedUser, password: nodePassword, isSelected: shouldSelect)
-            engine.configs.append(newConfig)
-            if shouldSelect {
+            // If user typed the same host/port/hub as an existing node, update it!
+            if let matchIndex = engine.configs.firstIndex(where: { $0.host == trimmedHost && $0.port == portInt && $0.hub.caseInsensitiveCompare(finalHub) == .orderedSame }) {
+                engine.configs[matchIndex].name = finalName
+                engine.configs[matchIndex].username = finalUser
+                engine.configs[matchIndex].password = nodePassword
+                for idx in engine.configs.indices {
+                    engine.configs[idx].isSelected = (idx == matchIndex)
+                }
+                engine.currentConfig = engine.configs[matchIndex]
+                engine.appendLog("[Config] 更新已有节点: \(finalName) (User: \(finalUser))")
+            } else {
+                for idx in engine.configs.indices {
+                    engine.configs[idx].isSelected = false
+                }
+                let newConfig = VPNServerConfig(name: finalName, host: trimmedHost, port: portInt, hub: finalHub, username: finalUser, password: nodePassword, isSelected: true)
+                engine.configs.append(newConfig)
                 engine.currentConfig = newConfig
+                engine.appendLog("[Config] 新增并选择节点: \(finalName)")
             }
-            engine.appendLog("[Config] 新增节点: \(finalName)")
         }
         engine.saveConfigs()
 
