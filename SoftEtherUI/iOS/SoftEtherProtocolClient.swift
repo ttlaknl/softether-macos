@@ -10,6 +10,7 @@
 import Foundation
 import Network
 import Security
+import Darwin
 
 // MARK: - 1. SoftEther SHA-0 Implementation (Ported from Mayaqua/Encrypt.c)
 
@@ -303,6 +304,7 @@ public final class SoftEtherTunnelSession {
     private var connection: NWConnection?
     private let queue = DispatchQueue(label: "com.softether.ios.session", qos: .userInitiated)
     private let stopLock = NSLock()
+    private let statsLock = NSLock()
     private var _isStopped = false
     private var isStopped: Bool {
         get { stopLock.lock(); defer { stopLock.unlock() }; return _isStopped }
@@ -310,7 +312,10 @@ public final class SoftEtherTunnelSession {
     }
     private var rxBuffer = Data()
     private var isRunning = false
+    private var disconnectNotified = false
     private var keepAliveTimer: DispatchSourceTimer?
+    private var keepAliveTickCount: UInt64 = 0
+    private var handshakeTimeoutWork: DispatchWorkItem?
     private var pendingHandshake: (sessionName: String, completion: (Result<HandshakeResult, Error>) -> Void)?
 
     // Virtual L2 Adapter MAC & Learned Gateway MAC
@@ -319,13 +324,62 @@ public final class SoftEtherTunnelSession {
     private var assignedIPBytes: [UInt8] = [192, 168, 30, 18]
     private var gatewayIPBytes: [UInt8] = [192, 168, 30, 1]
     private var subnetMaskBytes: [UInt8] = [255, 255, 255, 0]
+    private var negotiatedDNSServers: [String] = ["8.8.8.8", "1.1.1.1"]
     private var dhcpCompleted = false
     private let dhcpXid: UInt32 = UInt32.random(in: 1...0x7FFFFFFF)
 
     public var onInboundIPPacket: ((Data) -> Void)?
+    public var onInboundIPPackets: (([Data]) -> Void)?
+    public var onDisconnect: ((Error?) -> Void)?
     public var onLog: ((String) -> Void)?
-    public private(set) var totalBytesSent: UInt64 = 0
-    public private(set) var totalBytesRecv: UInt64 = 0
+    private var _totalBytesSent: UInt64 = 0
+    private var _totalBytesRecv: UInt64 = 0
+    public var totalBytesSent: UInt64 {
+        statsLock.lock(); defer { statsLock.unlock() }; return _totalBytesSent
+    }
+    public var totalBytesRecv: UInt64 {
+        statsLock.lock(); defer { statsLock.unlock() }; return _totalBytesRecv
+    }
+
+    private func addBytesSent(_ count: Int) {
+        statsLock.lock()
+        _totalBytesSent += UInt64(count)
+        statsLock.unlock()
+    }
+
+    private func addBytesRecv(_ count: Int) {
+        statsLock.lock()
+        _totalBytesRecv += UInt64(count)
+        statsLock.unlock()
+    }
+
+    public static func resolveIPv4(host: String) -> String? {
+        var inAddr = in_addr()
+        if inet_pton(AF_INET, host, &inAddr) == 1 {
+            return host
+        }
+        var hints = addrinfo(
+            ai_flags: 0,
+            ai_family: AF_INET,
+            ai_socktype: SOCK_STREAM,
+            ai_protocol: 0,
+            ai_addrlen: 0,
+            ai_canonname: nil,
+            ai_addr: nil,
+            ai_next: nil
+        )
+        var res: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &res) == 0, let first = res else { return nil }
+        defer { freeaddrinfo(first) }
+        if let sa = first.pointee.ai_addr {
+            var sin = sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+            var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            if inet_ntop(AF_INET, &sin.sin_addr, &buf, socklen_t(INET_ADDRSTRLEN)) != nil {
+                return String(cString: buf)
+            }
+        }
+        return nil
+    }
 
     public init(host: String, port: UInt16, hub: String, username: String, password: String) {
         self.host = host
@@ -345,6 +399,10 @@ public final class SoftEtherTunnelSession {
 
     public func start(completion: @escaping (Result<HandshakeResult, Error>) -> Void) {
         isStopped = false
+        disconnectNotified = false
+        keepAliveTickCount = 0
+        dhcpCompleted = false
+
         let tlsOptions = NWProtocolTLS.Options()
         let secOpts = tlsOptions.securityProtocolOptions
         // iOS 13+ API (tls_protocol_version_t). The old sec_protocol_options_set_tls_min_version
@@ -357,7 +415,9 @@ public final class SoftEtherTunnelSession {
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.noDelay = true
         tcpOptions.enableKeepalive = true
-        tcpOptions.keepaliveIdle = 20
+        tcpOptions.keepaliveIdle = 10
+        tcpOptions.keepaliveInterval = 5
+        tcpOptions.keepaliveCount = 3
 
         let params = NWParameters(tls: tlsOptions, tcp: tcpOptions)
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
@@ -368,7 +428,31 @@ public final class SoftEtherTunnelSession {
         let conn = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: params)
         self.connection = conn
 
+        var handshakeCompletedOrFailed = false
         var handshakeEntered = false
+
+        let completeOnce: (Result<HandshakeResult, Error>) -> Void = { [weak self] result in
+            self?.handshakeTimeoutWork?.cancel()
+            self?.handshakeTimeoutWork = nil
+            guard !handshakeCompletedOrFailed else { return }
+            handshakeCompletedOrFailed = true
+            completion(result)
+        }
+
+        let timeoutWork = DispatchWorkItem { [weak self, weak conn] in
+            guard let self = self, !self.isStopped, !handshakeCompletedOrFailed else { return }
+            handshakeCompletedOrFailed = true
+            self.isRunning = false
+            conn?.cancel()
+            if self.connection === conn {
+                self.connection = nil
+            }
+            completion(.failure(Self.makeError("SSL-VPN 握手超时")))
+        }
+        handshakeTimeoutWork?.cancel()
+        handshakeTimeoutWork = timeoutWork
+        queue.asyncAfter(deadline: .now() + 12.0, execute: timeoutWork)
+
         conn.stateUpdateHandler = { [weak self] state in
             guard let self = self, !self.isStopped else { return }
             switch state {
@@ -376,16 +460,29 @@ public final class SoftEtherTunnelSession {
                 guard !handshakeEntered else { return }
                 handshakeEntered = true
                 self.log("[TLS] 已建立到 \(self.host):\(self.port) 的加密通道")
-                self.performWatermarkAndAuth(completion: completion)
+                self.performWatermarkAndAuth(completion: completeOnce)
             case .failed(let err):
-                if !handshakeEntered {
-                    handshakeEntered = true
-                    completion(.failure(err))
+                if !handshakeCompletedOrFailed {
+                    completeOnce(.failure(err))
+                } else if self.isRunning {
+                    self.triggerDisconnect(err)
+                }
+            case .cancelled:
+                if self.isRunning && !self.isStopped {
+                    self.triggerDisconnect(nil)
                 }
             default:
                 break
             }
         }
+
+        conn.viabilityUpdateHandler = { [weak self] isViable in
+            guard let self = self, !self.isStopped, self.isRunning else { return }
+            if !isViable {
+                self.log("[NW] 链路连通性暂时不可用，等待恢复或重连...")
+            }
+        }
+
         conn.start(queue: queue)
     }
 
@@ -393,13 +490,31 @@ public final class SoftEtherTunnelSession {
         isStopped = true
         queue.async { [weak self] in
             guard let self = self else { return }
+            self.handshakeTimeoutWork?.cancel()
+            self.handshakeTimeoutWork = nil
             self.isRunning = false
             self.pendingHandshake = nil
+            self.rxBuffer = Data()
             self.keepAliveTimer?.cancel()
             self.keepAliveTimer = nil
             self.connection?.cancel()
             self.connection = nil
         }
+    }
+
+    private func triggerDisconnect(_ error: Error?) {
+        guard !isStopped, !disconnectNotified else { return }
+        disconnectNotified = true
+        isRunning = false
+        pendingHandshake = nil
+        handshakeTimeoutWork?.cancel()
+        handshakeTimeoutWork = nil
+        keepAliveTimer?.cancel()
+        keepAliveTimer = nil
+        rxBuffer = Data()
+        connection?.cancel()
+        connection = nil
+        onDisconnect?(error)
     }
 
     // MARK: - SoftEther Handshake (Signature -> Hello -> Auth -> Welcome)
@@ -500,6 +615,7 @@ public final class SoftEtherTunnelSession {
 
                     self.isRunning = true
                     self.pendingHandshake = (sessionName: sessionName, completion: completion)
+                    self.sendKeepAlivePacket()
                     self.startKeepAliveTimer()
                     self.startDataStreamLoop()
 
@@ -519,76 +635,138 @@ public final class SoftEtherTunnelSession {
     // MARK: - L3 IPv4 -> L2 Ethernet Encapsulation
 
     public func sendIPv4Packet(_ ipPacket: Data) {
-        guard isRunning, ipPacket.count >= 20 else { return }
-        // Check IPv4 version nibble
-        let version = (ipPacket[ipPacket.startIndex] >> 4) & 0x0F
-        guard version == 4 else { return }
+        sendIPv4Packets([ipPacket])
+    }
 
-        var ethFrame = Data(capacity: 14 + ipPacket.count)
-        ethFrame.append(contentsOf: gatewayMAC) // Destination MAC (SecureNAT Gateway)
-        ethFrame.append(contentsOf: myMAC)      // Source MAC
-        ethFrame.append(contentsOf: [0x08, 0x00]) // EtherType: IPv4
-        ethFrame.append(ipPacket)
+    public func sendIPv4Packets(_ ipPackets: [Data]) {
+        guard !ipPackets.isEmpty else { return }
+        queue.async { [weak self] in
+            guard let self = self, self.isRunning, !self.isStopped else { return }
 
-        sendEthernetFrame(ethFrame)
+            var frames: [Data] = []
+            frames.reserveCapacity(ipPackets.count)
+
+            for ipPacket in ipPackets {
+                guard ipPacket.count >= 20 else { continue }
+                let version = (ipPacket[ipPacket.startIndex] >> 4) & 0x0F
+                guard version == 4 else { continue }
+
+                var ethFrame = Data(capacity: 14 + ipPacket.count)
+                ethFrame.append(contentsOf: self.gatewayMAC) // Destination MAC (SecureNAT Gateway)
+                ethFrame.append(contentsOf: self.myMAC)      // Source MAC
+                ethFrame.append(contentsOf: [0x08, 0x00])    // EtherType: IPv4
+                ethFrame.append(ipPacket)
+                frames.append(ethFrame)
+            }
+
+            guard !frames.isEmpty else { return }
+            self.sendEthernetFrames(frames)
+        }
     }
 
     private func sendEthernetFrame(_ frame: Data) {
-        var blockStream = Data(capacity: 8 + frame.count)
-        blockStream.appendBEUInt32(1) // 1 block
-        blockStream.appendBEUInt32(UInt32(frame.count))
-        blockStream.append(frame)
-        totalBytesSent += UInt64(blockStream.count)
-        sendRaw(blockStream) { _ in }
+        sendEthernetFrames([frame])
+    }
+
+    private func sendEthernetFrames(_ frames: [Data]) {
+        guard isRunning, !isStopped, !frames.isEmpty else { return }
+        let totalSize = 4 + frames.reduce(0) { $0 + 4 + $1.count }
+        var blockStream = Data(capacity: totalSize)
+        blockStream.appendBEUInt32(UInt32(frames.count))
+        for frame in frames {
+            blockStream.appendBEUInt32(UInt32(frame.count))
+            blockStream.append(frame)
+        }
+        addBytesSent(blockStream.count)
+        sendRaw(blockStream) { [weak self] err in
+            guard let self = self, let err = err else { return }
+            self.queue.async {
+                if self.isRunning && !self.isStopped {
+                    self.log("[Error] 发送数据帧失败: \(err.localizedDescription)")
+                    self.triggerDisconnect(err)
+                }
+            }
+        }
     }
 
     // MARK: - Inbound SoftEther Stream & L2 -> L3 Decapsulation
 
     private func startDataStreamLoop() {
-        guard isRunning, let conn = connection else { return }
+        guard isRunning, !isStopped, let conn = connection else { return }
         conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            guard let self = self, self.isRunning else { return }
+            guard let self = self else { return }
+            guard !self.isStopped, self.isRunning else { return }
+
             if let d = data, !d.isEmpty {
-                self.totalBytesRecv += UInt64(d.count)
+                self.addBytesRecv(d.count)
                 self.rxBuffer.append(d)
                 self.processRxStreamBuffer()
             }
             if isComplete || error != nil {
-                self.isRunning = false
+                if let err = error {
+                    self.log("[Disconnect] 通道接收中断: \(err.localizedDescription)")
+                } else {
+                    self.log("[Disconnect] 服务端关闭了数据流 (EOF)")
+                }
+                self.triggerDisconnect(error)
                 return
             }
-            self.startDataStreamLoop()
+            if self.isRunning && !self.isStopped {
+                self.startDataStreamLoop()
+            }
         }
     }
 
     private func processRxStreamBuffer() {
-        while rxBuffer.count >= 8 {
+        var inboundBatch: [Data] = []
+
+        while rxBuffer.count >= 4 {
             var offset = 0
-            guard let numBlocks = rxBuffer.readBEUInt32(at: &offset) else { return }
+            guard let numBlocks = rxBuffer.readBEUInt32(at: &offset) else { break }
+
+            // SoftEther allows 4-byte 0-block keepalive/flush marker (NextBlockNum == 0)
+            if numBlocks == 0 {
+                rxBuffer.removeFirst(4)
+                continue
+            }
 
             if numBlocks == 0xFFFFFFFF {
-                // KEEP_ALIVE_MAGIC
-                guard let kaSize = rxBuffer.readBEUInt32(at: &offset),
-                      kaSize <= 65536 else { return }
-                guard rxBuffer.count >= 8 + Int(kaSize) else { return }
+                // KEEP_ALIVE_MAGIC requires 4-byte magic + 4-byte size + kaSize payload
+                guard rxBuffer.count >= 8 else { break }
+                guard let kaSize = rxBuffer.readBEUInt32(at: &offset) else { break }
+                guard kaSize <= 65536 else {
+                    log("[Error] SoftEther KeepAlive 长度异常 (\(kaSize))，重置会话")
+                    rxBuffer = Data()
+                    triggerDisconnect(Self.makeError("KeepAlive 帧异常"))
+                    return
+                }
+                guard rxBuffer.count >= 8 + Int(kaSize) else { break }
                 rxBuffer.removeSubrange(0..<(8 + Int(kaSize)))
                 continue
             }
 
-            if numBlocks == 0 || numBlocks > 512 {
-                rxBuffer.removeAll()
+            guard numBlocks <= 4096 else {
+                log("[Error] SoftEther 数据块数量异常 (\(numBlocks))，重置会话")
+                rxBuffer = Data()
+                triggerDisconnect(Self.makeError("协议帧同步异常"))
                 return
             }
 
             var tempOffset = offset
             var frames: [Data] = []
+            frames.reserveCapacity(Int(numBlocks))
             var completeBatch = true
 
             for _ in 0..<numBlocks {
-                guard let blockSize = rxBuffer.readBEUInt32(at: &tempOffset),
-                      blockSize <= 65536 else {
+                guard let blockSize = rxBuffer.readBEUInt32(at: &tempOffset) else {
                     completeBatch = false
                     break
+                }
+                guard blockSize <= 65536 else {
+                    log("[Error] SoftEther 单帧长度异常 (\(blockSize))，重置会话")
+                    rxBuffer = Data()
+                    triggerDisconnect(Self.makeError("数据帧长度越界"))
+                    return
                 }
                 guard tempOffset + Int(blockSize) <= rxBuffer.count else {
                     completeBatch = false
@@ -600,28 +778,45 @@ public final class SoftEtherTunnelSession {
             }
 
             if !completeBatch {
-                return // Wait for more TCP bytes
+                break // Wait for more TCP bytes
             }
 
             rxBuffer.removeSubrange(0..<tempOffset)
             for frame in frames {
-                handleInboundEthernetFrame(frame)
+                if let ipPacket = handleInboundEthernetFrame(frame) {
+                    inboundBatch.append(ipPacket)
+                }
+            }
+        }
+
+        if rxBuffer.isEmpty {
+            rxBuffer = Data()
+        }
+
+        if !inboundBatch.isEmpty {
+            if let batchHandler = onInboundIPPackets {
+                batchHandler(inboundBatch)
+            } else if let singleHandler = onInboundIPPacket {
+                for pkt in inboundBatch {
+                    singleHandler(pkt)
+                }
             }
         }
     }
 
-    private func handleInboundEthernetFrame(_ frame: Data) {
-        guard frame.count >= 14 else { return }
+    private func handleInboundEthernetFrame(_ frame: Data) -> Data? {
+        guard frame.count >= 14 else { return nil }
         let srcMAC = [UInt8](frame[6..<12])
         let etherType = (UInt16(frame[12]) << 8) | UInt16(frame[13])
 
         if etherType == 0x0806 {
             // ARP Frame
             handleARPFrame(frame, srcMAC: srcMAC)
+            return nil
         } else if etherType == 0x0800 {
             // IPv4 Frame
             let ipPacket = Data(frame.dropFirst(14))
-            guard ipPacket.count >= 20 else { return }
+            guard ipPacket.count >= 20 else { return nil }
 
             // Learn Gateway MAC from unicast frames
             if (srcMAC[0] & 0x01) == 0 && srcMAC != myMAC {
@@ -633,8 +828,9 @@ public final class SoftEtherTunnelSession {
                 checkAndParseDHCPResponse(ipPacket: ipPacket, serverMAC: srcMAC)
             }
 
-            onInboundIPPacket?(ipPacket)
+            return ipPacket
         }
+        return nil
     }
 
     // MARK: - Built-in ARP & DHCP Mini-Stack for SoftEther SecureNAT
@@ -681,7 +877,7 @@ public final class SoftEtherTunnelSession {
         sendARPRequest(targetIP: assignedIPBytes)
     }
 
-    private func sendDHCPDiscover() {
+    private func buildDHCPPacket(options: [UInt8]) -> Data {
         var bootp = Data(count: 240)
         bootp[0] = 0x01 // BOOTREQUEST
         bootp[1] = 0x01 // Ethernet
@@ -695,8 +891,7 @@ public final class SoftEtherTunnelSession {
         for i in 0..<6 { bootp[28 + i] = myMAC[i] }
         // Magic Cookie: 99.130.83.99
         bootp[236] = 99; bootp[237] = 130; bootp[238] = 83; bootp[239] = 99
-        // DHCP Options: MsgType=1 (Discover), ParameterRequestList (Mask, Router, DNS), End
-        bootp.append(contentsOf: [53, 1, 1, 55, 3, 1, 3, 6, 255])
+        bootp.append(contentsOf: options)
 
         let udpLen = UInt16(8 + bootp.count)
         var udp = Data(capacity: Int(udpLen))
@@ -721,7 +916,25 @@ public final class SoftEtherTunnelSession {
         eth.append(contentsOf: myMAC)
         eth.append(contentsOf: [0x08, 0x00])
         eth.append(ip)
+        return eth
+    }
+
+    private func sendDHCPDiscover() {
+        // DHCP Options: MsgType=1 (Discover), ParameterRequestList (Mask, Router, DNS), End
+        let eth = buildDHCPPacket(options: [53, 1, 1, 55, 3, 1, 3, 6, 255])
         sendEthernetFrame(eth)
+    }
+
+    private func sendDHCPRequest(requestedIP: [UInt8], serverID: [UInt8]) {
+        var opts: [UInt8] = [53, 1, 3] // DHCPREQUEST
+        opts.append(contentsOf: [50, 4])
+        opts.append(contentsOf: requestedIP)
+        if serverID.count == 4 {
+            opts.append(contentsOf: [54, 4])
+            opts.append(contentsOf: serverID)
+        }
+        opts.append(contentsOf: [55, 3, 1, 3, 6, 255])
+        sendEthernetFrame(buildDHCPPacket(options: opts))
     }
 
     private func checkAndParseDHCPResponse(ipPacket: Data, serverMAC: [UInt8]) {
@@ -734,13 +947,55 @@ public final class SoftEtherTunnelSession {
         let bootp = Data(ipPacket.dropFirst(ihl + 8))
         guard bootp[0] == 0x02 else { return } // BOOTREPLY
         let yiaddr = [UInt8](bootp[16..<20])
-        if yiaddr[0] != 0 {
-            assignedIPBytes = yiaddr
-            gatewayMAC = serverMAC
-            dhcpCompleted = true
-            let ipStr = yiaddr.map(String.init).joined(separator: ".")
-            log("[DHCP] 从 SecureNAT 分配到内网 IP: \(ipStr)")
-            completePendingHandshakeIfNeeded()
+        guard yiaddr[0] != 0 else { return }
+
+        var msgType: UInt8 = 0
+        var serverID: [UInt8] = [UInt8](bootp[20..<24])
+        var idx = 240
+        while idx < bootp.count {
+            let opt = bootp[idx]
+            if opt == 255 { break }
+            if opt == 0 { idx += 1; continue }
+            guard idx + 1 < bootp.count else { break }
+            let len = Int(bootp[idx + 1])
+            guard idx + 2 + len <= bootp.count else { break }
+            let valStart = idx + 2
+            if opt == 53 && len == 1 {
+                msgType = bootp[valStart]
+            } else if opt == 1 && len == 4 {
+                subnetMaskBytes = [UInt8](bootp[valStart..<(valStart + 4)])
+            } else if opt == 3 && len >= 4 {
+                gatewayIPBytes = [UInt8](bootp[valStart..<(valStart + 4)])
+            } else if opt == 6 && len >= 4 {
+                var dnsList: [String] = []
+                for j in stride(from: 0, to: len - 3, by: 4) {
+                    dnsList.append(bootp[(valStart + j)..<(valStart + j + 4)].map(String.init).joined(separator: "."))
+                }
+                if !dnsList.isEmpty { negotiatedDNSServers = dnsList }
+            } else if opt == 54 && len == 4 {
+                serverID = [UInt8](bootp[valStart..<(valStart + 4)])
+            }
+            idx += 2 + len
+        }
+
+        assignedIPBytes = yiaddr
+        gatewayMAC = serverMAC
+
+        if msgType == 2 { // DHCPOFFER -> commit lease via DHCPREQUEST
+            sendDHCPRequest(requestedIP: yiaddr, serverID: serverID)
+            if !dhcpCompleted {
+                dhcpCompleted = true
+                let ipStr = yiaddr.map(String.init).joined(separator: ".")
+                log("[DHCP] 从 SecureNAT 分配到内网 IP: \(ipStr)")
+                completePendingHandshakeIfNeeded()
+            }
+        } else {
+            if !dhcpCompleted {
+                dhcpCompleted = true
+                let ipStr = yiaddr.map(String.init).joined(separator: ".")
+                log("[DHCP] 从 SecureNAT 确认租约 IP: \(ipStr)")
+                completePendingHandshakeIfNeeded()
+            }
         }
     }
 
@@ -756,7 +1011,7 @@ public final class SoftEtherTunnelSession {
             assignedIP: ipStr,
             subnetMask: maskStr,
             gatewayIP: gwStr,
-            dnsServers: ["8.8.8.8", "1.1.1.1"]
+            dnsServers: negotiatedDNSServers
         )))
     }
 
@@ -774,16 +1029,37 @@ public final class SoftEtherTunnelSession {
 
     // MARK: - KeepAlive & HTTP Helpers
 
+    private func sendKeepAlivePacket() {
+        guard isRunning, !isStopped else { return }
+        var ka = Data(capacity: 16)
+        ka.appendBEUInt32(0xFFFFFFFF) // KEEP_ALIVE_MAGIC
+        ka.appendBEUInt32(8)
+        for _ in 0..<8 { ka.append(UInt8.random(in: 0...255)) }
+        addBytesSent(ka.count)
+        sendRaw(ka) { [weak self] err in
+            guard let self = self, let err = err else { return }
+            self.queue.async {
+                if self.isRunning && !self.isStopped {
+                    self.log("[KeepAlive] 心跳发送失败: \(err.localizedDescription)")
+                    self.triggerDisconnect(err)
+                }
+            }
+        }
+    }
+
     private func startKeepAliveTimer() {
+        keepAliveTimer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + 15, repeating: 15)
+        // SoftEther server default TimeOut is 20s; send KeepAlive every 5s with strict leeway
+        timer.schedule(deadline: .now() + .seconds(5), repeating: .seconds(5), leeway: .milliseconds(200))
         timer.setEventHandler { [weak self] in
-            guard let self = self, self.isRunning else { return }
-            var ka = Data()
-            ka.appendBEUInt32(0xFFFFFFFF) // KEEP_ALIVE_MAGIC
-            ka.appendBEUInt32(8)
-            for _ in 0..<8 { ka.append(UInt8.random(in: 0...255)) }
-            self.sendRaw(ka) { _ in }
+            guard let self = self, self.isRunning, !self.isStopped else { return }
+            self.sendKeepAlivePacket()
+            self.keepAliveTickCount += 1
+            // Periodically refresh SecureNAT ARP entry before its 30s expiration
+            if self.keepAliveTickCount % 5 == 0 {
+                self.sendGratuitousARP()
+            }
         }
         timer.resume()
         self.keepAliveTimer = timer

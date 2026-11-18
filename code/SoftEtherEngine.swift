@@ -625,6 +625,7 @@ public class SoftEtherEngine: ObservableObject {
                 let protocolConfiguration = NETunnelProviderProtocol()
                 protocolConfiguration.providerBundleIdentifier = providerId
                 protocolConfiguration.serverAddress = "\(config.host):\(config.port)"
+                protocolConfiguration.disconnectOnSleep = false
                 protocolConfiguration.providerConfiguration = [
                     "hub": config.hub,
                     "port": config.port,
@@ -695,8 +696,11 @@ public class SoftEtherEngine: ObservableObject {
     private func handleNEStatusUpdate(_ neStatus: NEVPNStatus, config: VPNServerConfig) {
         guard iosDirectSession == nil else { return }
         switch neStatus {
-        case .connecting, .reasserting:
+        case .connecting:
             neHasEnteredConnectingOrConnected = true
+        case .reasserting:
+            neHasEnteredConnectingOrConnected = true
+            appendLog("[iOS NE] 检测到网络波动，隧道正在后台自动重连...")
         case .connected:
             neHasEnteredConnectingOrConnected = true
             if state == .connecting || state == .connected {
@@ -713,6 +717,7 @@ public class SoftEtherEngine: ObservableObject {
         case .disconnected, .invalid:
             if state == .connected || (state == .connecting && neHasEnteredConnectingOrConnected) {
                 let wasConnecting = (state == .connecting)
+                let droppedManager = activeNEManager
                 stopTrafficMetricsTimer()
                 removeNEStatusObserver()
                 activeNEManager = nil
@@ -720,6 +725,12 @@ public class SoftEtherEngine: ObservableObject {
                 assignedIP = wasConnecting ? "隧道启动失败" : "未分配"
                 activeRouteHost = nil
                 appendLog(wasConnecting ? "[iOS Error] NetworkExtension 隧道未能建立连接，已退出" : "[iOS NE] NetworkExtension 隧道已断开")
+                if #available(iOS 16.0, *), let mgr = droppedManager {
+                    mgr.connection.fetchLastDisconnectError { [weak self] err in
+                        guard let self = self, let err = err else { return }
+                        self.logFromBackground("[iOS NE Detail] 系统断开原因: \(err.localizedDescription)")
+                    }
+                }
             }
         default:
             break
@@ -851,6 +862,25 @@ public class SoftEtherEngine: ObservableObject {
         )
         session.onLog = { [weak self] msg in
             self?.logFromBackground(msg)
+        }
+        session.onDisconnect = { [weak self, weak session] err in
+            Task { @MainActor [weak self] in
+                guard let self = self,
+                      let session = session,
+                      self.iosDirectSession === session,
+                      self.state == .connected else { return }
+                let reason = err?.localizedDescription ?? "链路关闭"
+                self.appendLog("[iOS Direct] 通道中断 (\(reason))，2 秒后自动重连...")
+                self.iosDirectSession?.stop()
+                self.iosDirectSession = nil
+                self.stopTrafficMetricsTimer()
+                self.state = .connecting
+                self.assignedIP = "重连中..."
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    guard let self = self, self.state == .connecting else { return }
+                    self.startIOSDirectSessionFallback(config: config)
+                }
+            }
         }
         self.iosDirectSession = session
 
