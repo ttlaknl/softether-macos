@@ -1,0 +1,3 @@
+[submodule "softether_src"]
+	path = softether_src
+	url = https://github.com/SoftEtherVPN/SoftEtherVPN.git
