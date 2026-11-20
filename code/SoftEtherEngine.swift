@@ -724,11 +724,26 @@ public class SoftEtherEngine: ObservableObject {
                 state = wasConnecting ? .error : .disconnected
                 assignedIP = wasConnecting ? "隧道启动失败" : "未分配"
                 activeRouteHost = nil
-                appendLog(wasConnecting ? "[iOS Error] NetworkExtension 隧道未能建立连接，已退出" : "[iOS NE] NetworkExtension 隧道已断开")
+
+                var disconnectReasonLogged = false
+                let sharedDefaults = UserDefaults(suiteName: "group.org.softether.SoftEtherUI")
+                if let lastReason = sharedDefaults?.string(forKey: "last_tunnel_disconnect_reason"),
+                   let ts = sharedDefaults?.double(forKey: "last_tunnel_disconnect_time"),
+                   Date().timeIntervalSince1970 - ts < 15.0 {
+                    appendLog(lastReason)
+                    disconnectReasonLogged = true
+                    sharedDefaults?.removeObject(forKey: "last_tunnel_disconnect_reason")
+                }
+
+                if !disconnectReasonLogged {
+                    appendLog(wasConnecting ? "[iOS Error] NetworkExtension 隧道未能建立连接，已退出" : "[iOS NE] NetworkExtension 隧道已断开")
+                }
+
                 if #available(iOS 16.0, *), let mgr = droppedManager {
                     mgr.connection.fetchLastDisconnectError { [weak self] err in
                         guard let self = self, let err = err else { return }
-                        self.logFromBackground("[iOS NE Detail] 系统断开原因: \(err.localizedDescription)")
+                        let formatted = SoftEtherTunnelSession.formatNWError(err)
+                        self.logFromBackground("[系统断线监测] 系统底层报告断开原因: \(formatted)")
                     }
                 }
             }
@@ -813,20 +828,25 @@ public class SoftEtherEngine: ObservableObject {
         do {
             try session.sendProviderMessage(msg) { [weak self] response in
                 guard let data = response,
-                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return }
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
                 Task { @MainActor [weak self] in
                     guard let self = self, self.iosDirectSession == nil,
                           self.state == .connected || self.state == .connecting else { return }
-                    let isRunning = (dict["running"] == "true")
-                    if isRunning, let ip = dict["assignedIP"], !ip.isEmpty {
+                    if let recentLogs = dict["recentLogs"] as? [String] {
+                        for log in recentLogs {
+                            self.appendLog(log)
+                        }
+                    }
+                    let isRunning = (dict["running"] as? String == "true")
+                    if isRunning, let ip = dict["assignedIP"] as? String, !ip.isEmpty {
                         self.assignedIP = ip
                         if !self.neAssignedIPLogged {
                             self.neAssignedIPLogged = true
                             self.appendLog("[iOS NE] 虚拟网卡已绑定内网 IP: \(ip)")
                         }
                     }
-                    if let sent = UInt64(dict["bytesSent"] ?? ""),
-                       let recv = UInt64(dict["bytesRecv"] ?? "") {
+                    if let sentStr = dict["bytesSent"] as? String, let sent = UInt64(sentStr),
+                       let recvStr = dict["bytesRecv"] as? String, let recv = UInt64(recvStr) {
                         self.updateIOSTrafficMetrics(bytesSent: sent, bytesRecv: recv)
                     }
                 }

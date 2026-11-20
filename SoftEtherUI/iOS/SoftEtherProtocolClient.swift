@@ -315,6 +315,7 @@ public final class SoftEtherTunnelSession {
     private var disconnectNotified = false
     private var keepAliveTimer: DispatchSourceTimer?
     private var keepAliveTickCount: UInt64 = 0
+    private var lastInboundDataTime: Date = Date()
     private var handshakeTimeoutWork: DispatchWorkItem?
     private var pendingHandshake: (sessionName: String, completion: (Result<HandshakeResult, Error>) -> Void)?
 
@@ -381,6 +382,42 @@ public final class SoftEtherTunnelSession {
         return nil
     }
 
+    /// 翻译 POSIX / TLS / DNS / Network 框架错误为清晰详尽的中文诊断原因
+    public static func formatNWError(_ error: Error) -> String {
+        if let nwErr = error as? NWError {
+            switch nwErr {
+            case .posix(let code):
+                switch code {
+                case .ECONNRESET:
+                    return "网络连接被对端或防火墙重置 (ECONNRESET 54: Connection reset by peer)"
+                case .ETIMEDOUT:
+                    return "网络连接超时 (ETIMEDOUT 60: Operation timed out)"
+                case .ENETUNREACH:
+                    return "目标网络不可达 (ENETUNREACH 51: Network is unreachable)"
+                case .ECONNREFUSED:
+                    return "目标服务器端口拒绝连接 (ECONNREFUSED 61: Connection refused)"
+                case .EHOSTUNREACH:
+                    return "目标主机路由不可达 (EHOSTUNREACH 65: Host is unreachable)"
+                case .EPIPE:
+                    return "写入已关闭的网络套接字 (EPIPE 32: Broken pipe)"
+                case .ENOTCONN:
+                    return "套接字未处于连接状态 (ENOTCONN 57: Socket not connected)"
+                case .ECANCELED:
+                    return "网络操作已被系统取消 (ECANCELED: Operation canceled)"
+                default:
+                    return "底层 POSIX 网络错误 (代码: \(code.rawValue))"
+                }
+            case .dns(let dnsCode):
+                return "DNS 域名解析失败 (DNS 错误代码: \(dnsCode))"
+            case .tls(let status):
+                return "TLS/SSL 加密握手或传输异常 (OSStatus: \(status))"
+            @unknown default:
+                return "Network 框架错误: \(nwErr.localizedDescription)"
+            }
+        }
+        return error.localizedDescription
+    }
+
     public init(host: String, port: UInt16, hub: String, username: String, password: String) {
         self.host = host
         self.port = port
@@ -415,11 +452,12 @@ public final class SoftEtherTunnelSession {
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.noDelay = true
         tcpOptions.enableKeepalive = true
-        tcpOptions.keepaliveIdle = 10
-        tcpOptions.keepaliveInterval = 5
-        tcpOptions.keepaliveCount = 3
+        tcpOptions.keepaliveIdle = 15
+        tcpOptions.keepaliveInterval = 10
+        tcpOptions.keepaliveCount = 5
 
         let params = NWParameters(tls: tlsOptions, tcp: tcpOptions)
+        params.serviceClass = .responsiveData
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
             completion(.failure(Self.makeError("无效端口: \(port)")))
             return
@@ -447,7 +485,7 @@ public final class SoftEtherTunnelSession {
             if self.connection === conn {
                 self.connection = nil
             }
-            completion(.failure(Self.makeError("SSL-VPN 握手超时")))
+            completion(.failure(Self.makeError("SSL-VPN 握手超时 (12秒无响应)")))
         }
         handshakeTimeoutWork?.cancel()
         handshakeTimeoutWork = timeoutWork
@@ -461,13 +499,19 @@ public final class SoftEtherTunnelSession {
                 handshakeEntered = true
                 self.log("[TLS] 已建立到 \(self.host):\(self.port) 的加密通道")
                 self.performWatermarkAndAuth(completion: completeOnce)
+            case .waiting(let err):
+                let formatted = Self.formatNWError(err)
+                self.log("[网络监测] 底层链路等待恢复 (Waiting): \(formatted)")
             case .failed(let err):
+                let formatted = Self.formatNWError(err)
+                self.log("[断线监测] TCP/TLS 链路发生故障 (Failed): \(formatted)")
                 if !handshakeCompletedOrFailed {
                     completeOnce(.failure(err))
                 } else if self.isRunning {
                     self.triggerDisconnect(err)
                 }
             case .cancelled:
+                self.log("[断线监测] TCP/TLS 链路已取消 (Cancelled)")
                 if self.isRunning && !self.isStopped {
                     self.triggerDisconnect(nil)
                 }
@@ -478,8 +522,17 @@ public final class SoftEtherTunnelSession {
 
         conn.viabilityUpdateHandler = { [weak self] isViable in
             guard let self = self, !self.isStopped, self.isRunning else { return }
-            if !isViable {
-                self.log("[NW] 链路连通性暂时不可用，等待恢复或重连...")
+            if isViable {
+                self.log("[网络监测] 物理底层链路连通性已恢复正常 (Viable: true)")
+            } else {
+                self.log("[网络监测] 物理底层链路暂时不可用 (Viable: false)，等待网络恢复...")
+            }
+        }
+
+        conn.betterPathUpdateHandler = { [weak self] hasBetterPath in
+            guard let self = self, !self.isStopped, self.isRunning else { return }
+            if hasBetterPath {
+                self.log("[网络监测] 系统检测到更优物理网络路径可用 (如 Wi-Fi 已就绪)")
             }
         }
 
@@ -682,7 +735,8 @@ public final class SoftEtherTunnelSession {
             guard let self = self, let err = err else { return }
             self.queue.async {
                 if self.isRunning && !self.isStopped {
-                    self.log("[Error] 发送数据帧失败: \(err.localizedDescription)")
+                    let formatted = Self.formatNWError(err)
+                    self.log("[断线监测] 发送数据帧失败: \(formatted)")
                     self.triggerDisconnect(err)
                 }
             }
@@ -698,15 +752,17 @@ public final class SoftEtherTunnelSession {
             guard !self.isStopped, self.isRunning else { return }
 
             if let d = data, !d.isEmpty {
+                self.lastInboundDataTime = Date()
                 self.addBytesRecv(d.count)
                 self.rxBuffer.append(d)
                 self.processRxStreamBuffer()
             }
             if isComplete || error != nil {
                 if let err = error {
-                    self.log("[Disconnect] 通道接收中断: \(err.localizedDescription)")
+                    let formatted = Self.formatNWError(err)
+                    self.log("[断线监测] TCP 通道接收中断: \(formatted)")
                 } else {
-                    self.log("[Disconnect] 服务端关闭了数据流 (EOF)")
+                    self.log("[断线监测] 服务端主动关闭了 TCP 数据流 (EOF / FIN 包，可能是 Hub 会话超时或服务端断开)")
                 }
                 self.triggerDisconnect(error)
                 return
@@ -1040,7 +1096,8 @@ public final class SoftEtherTunnelSession {
             guard let self = self, let err = err else { return }
             self.queue.async {
                 if self.isRunning && !self.isStopped {
-                    self.log("[KeepAlive] 心跳发送失败: \(err.localizedDescription)")
+                    let formatted = Self.formatNWError(err)
+                    self.log("[断线监测] KeepAlive 心跳发送失败: \(formatted)")
                     self.triggerDisconnect(err)
                 }
             }
@@ -1049,6 +1106,7 @@ public final class SoftEtherTunnelSession {
 
     private func startKeepAliveTimer() {
         keepAliveTimer?.cancel()
+        lastInboundDataTime = Date()
         let timer = DispatchSource.makeTimerSource(queue: queue)
         // SoftEther server default TimeOut is 20s; send KeepAlive every 5s with strict leeway
         timer.schedule(deadline: .now() + .seconds(5), repeating: .seconds(5), leeway: .milliseconds(200))
@@ -1056,9 +1114,20 @@ public final class SoftEtherTunnelSession {
             guard let self = self, self.isRunning, !self.isStopped else { return }
             self.sendKeepAlivePacket()
             self.keepAliveTickCount += 1
-            // Periodically refresh SecureNAT ARP entry before its 30s expiration
-            if self.keepAliveTickCount % 5 == 0 {
+            
+            // Periodically refresh SecureNAT ARP entry before its 30s expiration (every 20s)
+            if self.keepAliveTickCount % 4 == 0 {
                 self.sendGratuitousARP()
+            }
+            
+            // Inbound silence check:
+            let silenceSec = Date().timeIntervalSince(self.lastInboundDataTime)
+            if silenceSec > 20.0 && self.keepAliveTickCount % 3 == 0 {
+                self.log("[断线监测] 链路静默警报: 服务端已超过 \(Int(silenceSec)) 秒未返回任何下行数据 (心跳: #\(self.keepAliveTickCount))")
+            }
+            if silenceSec > 45.0 {
+                self.log("[断线监测] 链路假死静默超时 (\(Int(silenceSec)) 秒无任何下行数据)，判定连接已中断并触发重连")
+                self.triggerDisconnect(Self.makeError("服务端静默超时 (\(Int(silenceSec)) 秒未响应)"))
             }
         }
         timer.resume()

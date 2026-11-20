@@ -82,7 +82,7 @@ struct LogConsoleView: View {
                         ForEach(Array(engine.logs.enumerated()), id: \.offset) { index, log in
                             Text(log)
                                 .font(.system(size: 12, weight: .regular, design: .monospaced))
-                                .foregroundColor(log.contains("[Error]") ? Color.red.opacity(0.9) : log.contains("[Success]") ? Color.green.opacity(0.9) : Color.green.opacity(0.8))
+                                .foregroundColor(colorForLog(log))
                                 .enableTextSelectionIfAvailable()
                                 .id(index)
                         }
@@ -146,6 +146,20 @@ struct LogConsoleView: View {
         }
     }
     
+    private func colorForLog(_ log: String) -> Color {
+        if log.contains("[Error]") || log.contains("[iOS Error]") {
+            return Color.red.opacity(0.95)
+        } else if log.contains("[断线监测]") || log.contains("[系统断线监测]") || log.contains("[心跳警报]") || log.contains("[Warning]") || log.contains("[iOS Notice]") {
+            return Color.orange.opacity(0.95)
+        } else if log.contains("[Success]") || log.contains("[iOS Success]") || log.contains("[Welcome]") {
+            return Color.green.opacity(0.95)
+        } else if log.contains("[网络监测]") || log.contains("[网络切换监测]") || log.contains("[iOS NE]") || log.contains("[DHCP]") || log.contains("[TLS]") {
+            return accentCyan.opacity(0.9)
+        } else {
+            return Color.green.opacity(0.8)
+        }
+    }
+
     private var copyAllLogsButton: some View {
         Button(action: copyAllLogs) {
             HStack(spacing: 4) {
