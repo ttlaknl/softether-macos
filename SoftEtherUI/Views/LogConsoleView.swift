@@ -178,7 +178,7 @@ struct LogConsoleView: View {
             if command.lowercased().contains("accountlist") {
                 engine.appendLog("AccountName | Status    | ServerAddress          | Hub")
                 engine.appendLog("------------+-----------+------------------------+-------")
-                engine.appendLog("SOFTETHER   | Connected | 154.13.4.209:992       | VPNGATE")
+                engine.appendLog("SOFTETHER   | Connected | vpn.example.com:443    | DEFAULT")
             } else {
                 engine.appendLog("Command executed via vpncmd.")
             }

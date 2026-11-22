@@ -3,8 +3,19 @@
 
 import SwiftUI
 
+#if os(macOS)
+class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillTerminate(_ notification: Notification) {
+        SoftEtherEngine.shared.cleanupOnAppExit()
+    }
+}
+#endif
+
 @main
 struct SoftEtherUIApp: App {
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #endif
     @StateObject private var engine = SoftEtherEngine.shared
     
     var body: some Scene {

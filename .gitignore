@@ -28,3 +28,12 @@ build_ios/
 
 # Unrelated workspace directories
 openwrt/
+
+# App Icon intermediate assets
+AppIcon.iconset/
+AppIcon.png
+
+# Xcode user state
+*.xcuserstate
+xcuserdata/
+DerivedData/

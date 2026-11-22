@@ -162,7 +162,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nDEST=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/MacOS\"\nRES_DEST=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/Resources\"\nmkdir -p \"${DEST}\"\nmkdir -p \"${RES_DEST}\"\n\n# Compile native C core if vpnclient not found\nif [ ! -f \"${SRCROOT}/vpnclient\" ]; then\n    echo \"Core binaries not found, running compile_softether_core_arm64.sh...\"\n    \"${SRCROOT}/compile_softether_core_arm64.sh\"\nfi\n\n# Clean up hamcore.se2 from MacOS/ if present (it is a data file, not Mach-O code object)\nrm -f \"${DEST}/hamcore.se2\"\n\n# Copy resource file to Contents/Resources (prevent CodeSign failure)\nif [ -f \"${SRCROOT}/hamcore.se2\" ]; then\n    cp -f \"${SRCROOT}/hamcore.se2\" \"${RES_DEST}/\"\n    chmod 644 \"${RES_DEST}/hamcore.se2\"\nfi\n\n# Copy binaries and libraries to Contents/MacOS\nfor f in vpnclient vpncmd libcedar.dylib libmayaqua.dylib; do\n    if [ -f \"${SRCROOT}/${f}\" ]; then\n        cp -f \"${SRCROOT}/${f}\" \"${DEST}/\"\n    fi\ndone\n\nchmod +x \"${DEST}/vpnclient\" \"${DEST}/vpncmd\" 2>/dev/null || true\n\n# Fix rpaths for self-contained app loading\nfor bin in vpnclient vpncmd; do\n    if [ -f \"${DEST}/${bin}\" ]; then\n        install_name_tool -change @rpath/libcedar.dylib @executable_path/libcedar.dylib \"${DEST}/${bin}\" 2>/dev/null || true\n        install_name_tool -change @rpath/libmayaqua.dylib @executable_path/libmayaqua.dylib \"${DEST}/${bin}\" 2>/dev/null || true\n    fi\ndone\n\nfor dylib in libcedar.dylib libmayaqua.dylib; do\n    if [ -f \"${DEST}/${dylib}\" ]; then\n        install_name_tool -id \"@executable_path/${dylib}\" \"${DEST}/${dylib}\" 2>/dev/null || true\n        install_name_tool -change @rpath/libmayaqua.dylib @executable_path/libmayaqua.dylib \"${DEST}/${dylib}\" 2>/dev/null || true\n        install_name_tool -change @rpath/libcedar.dylib @executable_path/libcedar.dylib \"${DEST}/${dylib}\" 2>/dev/null || true\n    fi\ndone\n\n# Pre-sign embedded binaries and libraries for clean Xcode CodeSign\nfor item in libmayaqua.dylib libcedar.dylib vpnclient vpncmd; do\n    if [ -f \"${DEST}/${item}\" ]; then\n        codesign --force --sign - \"${DEST}/${item}\" 2>/dev/null || true\n    fi\ndone\n";
+			shellScript = "set -e\nDEST=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/MacOS\"\nRES_DEST=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/Resources\"\nmkdir -p \"${DEST}\"\nmkdir -p \"${RES_DEST}\"\n\n# Compile native C core if vpnclient not found\nif [ ! -f \"${SRCROOT}/vpnclient\" ]; then\n    echo \"Core binaries not found, running compile_softether_core_arm64.sh...\"\n    \"${SRCROOT}/compile_softether_core_arm64.sh\"\nfi\n\n# Clean up hamcore.se2 from MacOS/ if present (it is a data file, not Mach-O code object)\nrm -f \"${DEST}/hamcore.se2\"\n\n# Copy resource file to Contents/Resources (prevent CodeSign failure)\nif [ -f \"${SRCROOT}/hamcore.se2\" ]; then\n    cp -f \"${SRCROOT}/hamcore.se2\" \"${RES_DEST}/\"\n    chmod 644 \"${RES_DEST}/hamcore.se2\"\nfi\n\n# Copy App Icon to Contents/Resources\nif [ -f \"${SRCROOT}/AppIcon.icns\" ]; then\n    cp -f \"${SRCROOT}/AppIcon.icns\" \"${RES_DEST}/\"\nfi\n\n# Copy binaries and libraries to Contents/MacOS\nfor f in vpnclient vpncmd libcedar.dylib libmayaqua.dylib; do\n    if [ -f \"${SRCROOT}/${f}\" ]; then\n        cp -f \"${SRCROOT}/${f}\" \"${DEST}/\"\n    fi\ndone\n\nchmod +x \"${DEST}/vpnclient\" \"${DEST}/vpncmd\" 2>/dev/null || true\n\n# Fix rpaths for self-contained app loading\nfor bin in vpnclient vpncmd; do\n    if [ -f \"${DEST}/${bin}\" ]; then\n        install_name_tool -change @rpath/libcedar.dylib @executable_path/libcedar.dylib \"${DEST}/${bin}\" 2>/dev/null || true\n        install_name_tool -change @rpath/libmayaqua.dylib @executable_path/libmayaqua.dylib \"${DEST}/${bin}\" 2>/dev/null || true\n    fi\ndone\n\nfor dylib in libcedar.dylib libmayaqua.dylib; do\n    if [ -f \"${DEST}/${dylib}\" ]; then\n        install_name_tool -id \"@executable_path/${dylib}\" \"${DEST}/${dylib}\" 2>/dev/null || true\n        install_name_tool -change @rpath/libmayaqua.dylib @executable_path/libmayaqua.dylib \"${DEST}/${dylib}\" 2>/dev/null || true\n        install_name_tool -change @rpath/libcedar.dylib @executable_path/libcedar.dylib \"${DEST}/${dylib}\" 2>/dev/null || true\n    fi\ndone\n\n# Pre-sign embedded binaries and libraries for clean Xcode CodeSign\nfor item in libmayaqua.dylib libcedar.dylib vpnclient vpncmd; do\n    if [ -f \"${DEST}/${item}\" ]; then\n        codesign --force --sign - \"${DEST}/${item}\" 2>/dev/null || true\n    fi\ndone\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -244,7 +244,6 @@
 		AA0000000000000000000034 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -252,11 +251,13 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "SoftEther VPN";
+				INFOPLIST_KEY_CFBundleIconFile = AppIcon;
+				INFOPLIST_KEY_CFBundleIconName = AppIcon;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSMinimumSystemVersion = 12.0;
 				INFOPLIST_KEY_NSHighResolutionCapable = YES;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
-				MARKETING_VERSION = 2.3;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = org.softether.SoftEtherUI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -267,7 +268,6 @@
 		AA0000000000000000000035 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -275,11 +275,13 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "SoftEther VPN";
+				INFOPLIST_KEY_CFBundleIconFile = AppIcon;
+				INFOPLIST_KEY_CFBundleIconName = AppIcon;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSMinimumSystemVersion = 12.0;
 				INFOPLIST_KEY_NSHighResolutionCapable = YES;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
-				MARKETING_VERSION = 2.3;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = org.softether.SoftEtherUI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

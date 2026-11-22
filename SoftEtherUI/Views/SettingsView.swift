@@ -73,6 +73,7 @@ struct SettingsView: View {
                 
                 sectionCard(title: "核心与系统构建信息", icon: "info.circle.fill") {
                     VStack(alignment: .leading, spacing: 8) {
+                        infoRow(label: "软件版本", value: "v1.0.0")
                         infoRow(label: "架构支持", value: "ARM64 (Apple Silicon M1/M2/M3/M4 & iOS)")
                         infoRow(label: "编译框架", value: "SwiftUI (macOS 12.0+ / iOS 15.0+)")
                         infoRow(label: "网络驱动模型", value: "macOS Daemon / iOS NetworkExtension")

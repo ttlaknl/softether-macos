@@ -12,9 +12,9 @@ struct ServerConfigView: View {
     @State private var nodeName = ""
     @State private var nodeHost = ""
     @State private var nodePort = "443"
-    @State private var nodeHub = "VPNGATE"
-    @State private var nodeUsername = "vpn"
-    @State private var nodePassword = "vpn"
+    @State private var nodeHub = "DEFAULT"
+    @State private var nodeUsername = ""
+    @State private var nodePassword = ""
     @State private var hostValidationError = ""
     @State private var portValidationError = ""
     
@@ -166,7 +166,7 @@ struct ServerConfigView: View {
             
             VStack(alignment: .leading, spacing: 14) {
                 inputField(title: "节点名称", placeholder: "例如: 团队测试服务器", text: $nodeName)
-                inputField(title: "服务器主机 (Host/IP)", placeholder: "154.13.4.209", text: $nodeHost)
+                inputField(title: "服务器主机 (Host/IP)", placeholder: "vpn.example.com", text: $nodeHost)
                 if !hostValidationError.isEmpty {
                     Text(hostValidationError)
                         .font(.caption)
@@ -178,8 +178,8 @@ struct ServerConfigView: View {
                         .font(.caption)
                         .foregroundColor(accentRed)
                 }
-                inputField(title: "虚拟 Hub 名称", placeholder: "VPNGATE", text: $nodeHub)
-                inputField(title: "验证用户名", placeholder: "laknl", text: $nodeUsername)
+                inputField(title: "虚拟 Hub 名称", placeholder: "DEFAULT", text: $nodeHub)
+                inputField(title: "验证用户名", placeholder: "vpn", text: $nodeUsername)
                 inputField(title: "验证密码", placeholder: "输入密码", text: $nodePassword, isSecure: true)
             }
             
@@ -205,11 +205,7 @@ struct ServerConfigView: View {
             .padding(.top, 12)
         }
         .padding(24)
-        #if os(macOS)
         .frame(width: 440)
-        #else
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        #endif
         .background(Color(red: 0.1, green: 0.12, blue: 0.18))
     }
     
@@ -242,9 +238,9 @@ struct ServerConfigView: View {
         nodeName = ""
         nodeHost = ""
         nodePort = "443"
-        nodeHub = "VPNGATE"
-        nodeUsername = "vpn"
-        nodePassword = "vpn"
+        nodeHub = "DEFAULT"
+        nodeUsername = ""
+        nodePassword = ""
         hostValidationError = ""
         portValidationError = ""
         showingSheet = true

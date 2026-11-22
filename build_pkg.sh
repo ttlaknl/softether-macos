@@ -4,8 +4,8 @@
 set -euo pipefail
 
 APP_NAME="SoftEtherUI"
-VERSION="2.3.0"
-PKG_NAME="SoftEtherUI-${VERSION}.pkg"
+VERSION="1.0.0"
+PKG_NAME="SoftEtherUI-v${VERSION}.pkg"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_ROOT="$(mktemp -d /tmp/softether_pkg_XXXXXX)"
 
@@ -23,37 +23,57 @@ if [ ! -d "${APP_NAME}.app" ]; then
     exit 1
 fi
 
-# 1. 准备安装根目录
-mkdir -p "${PKG_ROOT}/Applications"
-cp -R "${APP_NAME}.app" "${PKG_ROOT}/Applications/"
+# 规范化权限与清理属性 (755/644)，确保所有用户均有读取和执行权限
+find "${APP_NAME}.app" -type d -exec chmod 755 {} +
+find "${APP_NAME}.app" -type f -exec chmod 644 {} +
+chmod 755 "${APP_NAME}.app/Contents/MacOS"/* 2>/dev/null || true
 
-echo "[1/3] pkgbuild 生成 component package..."
+# 清理扩展属性以防打包进 AppleDouble 临时文件
+dot_clean -m "${APP_NAME}.app" 2>/dev/null || true
+xattr -cr "${APP_NAME}.app" 2>/dev/null || true
 
-# 2. pkgbuild
+# 创建 postinstall 脚本，确保安装到 /Applications 后权限全局可读可执行 (防止普通用户运行时 dyld errno=13)
+mkdir -p "${PKG_ROOT}/scripts"
+cat > "${PKG_ROOT}/scripts/postinstall" <<'SCRIPTEOF'
+#!/bin/bash
+set -e
+chmod -R u=rwX,go=rX "/Applications/SoftEtherUI.app" 2>/dev/null || true
+chmod 755 "/Applications/SoftEtherUI.app/Contents/MacOS"/* 2>/dev/null || true
+exit 0
+SCRIPTEOF
+chmod 755 "${PKG_ROOT}/scripts/postinstall"
+
+echo "[1/3] pkgbuild 生成 component package (目标: /Applications)..."
+
+# 使用标准的 --component 模式，严格将目标指定为 /Applications，杜绝系统宗卷 (System Volume) 冲突
 pkgbuild \
+    --component "${APP_NAME}.app" \
+    --install-location "/Applications" \
+    --scripts "${PKG_ROOT}/scripts" \
     --identifier "com.softether.ui" \
     --version "${VERSION}" \
-    --install-location "/" \
-    --root "${PKG_ROOT}" \
     "${PKG_ROOT}/SoftEtherUI_component.pkg"
 
 echo "[2/3] productbuild 添加 distribution XML..."
 
 # 3. distribution XML
-cat > "${PKG_ROOT}/distribution.dist" <<'DIST'
-<?xml version="1.0" encoding="utf-8" standalone="no"?>
-<installer-gui-script minSpecVersion="2">
+cat > "${PKG_ROOT}/distribution.dist" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
     <title>SoftEtherUI VPN Client</title>
     <organization>com.softether</organization>
-    <domains enable_localization="false" enable_anywhereLanguageDirectory="false"/>
-    <options customize="never" require-scripts="false" rootVolumeOnly="false"/>
+    <options customize="never" require-scripts="false" hostArchitectures="arm64"/>
+    <domains enable_anywhere="true" enable_currentUserHome="false" enable_localSystem="true"/>
     <choices-outline>
-        <line choice="choice0"/>
+        <line choice="default">
+            <line choice="com.softether.ui"/>
+        </line>
     </choices-outline>
-    <choice id="choice0" title="SoftEtherUI" visible="false">
+    <choice id="default"/>
+    <choice id="com.softether.ui" visible="false">
         <pkg-ref id="com.softether.ui"/>
     </choice>
-    <pkg-ref id="com.softether.ui" version="2.3.0" onConclusion="none">SoftEtherUI_component.pkg</pkg-ref>
+    <pkg-ref id="com.softether.ui" version="${VERSION}" onConclusion="none">SoftEtherUI_component.pkg</pkg-ref>
     <installation-check script="install_check();"/>
     <script>
     function install_check() {
@@ -69,7 +89,7 @@ cat > "${PKG_ROOT}/distribution.dist" <<'DIST'
     <welcome file="welcome.html"/>
     <conclusion file="conclusion.html"/>
 </installer-gui-script>
-DIST
+EOF
 
 # 欢迎页
 cat > "${PKG_ROOT}/welcome.html" <<'HTML'

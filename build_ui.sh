@@ -3,14 +3,16 @@
 # Multi-platform Build Script for SoftEther UI Client (arm64 Only - Apple Silicon)
 set -euo pipefail
 
-# 自动切换到脚本所在目录，支持从任意终端目录调用
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "${SCRIPT_DIR}"
-
 APP_NAME="SoftEtherUI"
 APP_BUNDLE="${APP_NAME}.app"
-APP_EXECUTABLE_DIR="${APP_BUNDLE}/Contents/MacOS"
-APP_RESOURCES_DIR="${APP_BUNDLE}/Contents/Resources"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${PROJECT_DIR}"
+BUILD_TEMP="$(mktemp -d /tmp/softether_build_XXXXXX)"
+trap 'rm -rf "${BUILD_TEMP}"' EXIT
+
+STAGING_BUNDLE="${BUILD_TEMP}/${APP_BUNDLE}"
+APP_EXECUTABLE_DIR="${STAGING_BUNDLE}/Contents/MacOS"
+APP_RESOURCES_DIR="${STAGING_BUNDLE}/Contents/Resources"
 
 echo "============================================================"
 echo " Building SoftEther UI Client App for Apple Silicon (arm64)"
@@ -20,12 +22,7 @@ echo "============================================================"
 # 0. Kill existing running instance to release file locks
 pkill -f "${APP_NAME}" 2>/dev/null || true
 
-# Safe removal of old bundle
-if [ -d "${APP_BUNDLE}" ]; then
-    rm -rf "${APP_BUNDLE}" 2>/dev/null || mv "${APP_BUNDLE}" "/tmp/${APP_NAME}_$(date +%s).app" 2>/dev/null || true
-fi
-
-# 1. Create App Bundle structure
+# 1. Create App Bundle structure in clean temp directory
 mkdir -p "${APP_EXECUTABLE_DIR}"
 mkdir -p "${APP_RESOURCES_DIR}"
 
@@ -67,6 +64,12 @@ if [ -f "vpncmd" ]; then cp -f vpncmd "${APP_EXECUTABLE_DIR}/"; fi
 if [ -f "hamcore.se2" ]; then cp -f hamcore.se2 "${APP_RESOURCES_DIR}/"; fi
 rm -f "${APP_EXECUTABLE_DIR}/hamcore.se2"
 
+# 嵌入 App 图标
+if [ -f "AppIcon.icns" ]; then
+    cp -f "AppIcon.icns" "${APP_RESOURCES_DIR}/"
+    echo "  - [Bundle] 已嵌入 AppIcon.icns"
+fi
+
 # 关键: 拷贝动态库到 App Bundle (缺少它们 vpnclient/vpncmd 会 dyld 崩溃)
 for dylib in libcedar.dylib libmayaqua.dylib; do
     if [ -f "${dylib}" ]; then
@@ -103,8 +106,8 @@ for dylib in libcedar.dylib libmayaqua.dylib; do
 done
 
 # 4. Generate Info.plist
-echo "[3/3] Generating Info.plist..."
-cat <<EOF > "${APP_BUNDLE}/Contents/Info.plist"
+echo "[3/4] Generating Info.plist with AppIcon configuration..."
+cat <<EOF > "${STAGING_BUNDLE}/Contents/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -118,9 +121,13 @@ cat <<EOF > "${APP_BUNDLE}/Contents/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.3</string>
+    <string>1.0.0</string>
     <key>CFBundleVersion</key>
-    <string>2.3.0</string>
+    <string>1.0.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>NSHighResolutionCapable</key>
@@ -129,16 +136,33 @@ cat <<EOF > "${APP_BUNDLE}/Contents/Info.plist"
 </plist>
 EOF
 
-# 5. Code Signing (Required for Apple Silicon arm64 - AMFI enforcement)
+# 5. Code Signing in clean temp directory
 echo "[4/4] Signing App Bundle (Ad-Hoc) for Apple Silicon..."
+# 规范化权限 (目录 755, 可执行/动态库 755, 资源/plist 644)，确保所有用户均有读取和执行权限
+find "${STAGING_BUNDLE}" -type d -exec chmod 755 {} +
+find "${STAGING_BUNDLE}" -type f -exec chmod 644 {} +
+chmod 755 "${APP_EXECUTABLE_DIR}/${APP_NAME}"
 for item in libmayaqua.dylib libcedar.dylib vpnclient vpncmd; do
+    if [ -f "${APP_EXECUTABLE_DIR}/${item}" ]; then
+        chmod 755 "${APP_EXECUTABLE_DIR}/${item}"
+    fi
+done
+
+xattr -cr "${STAGING_BUNDLE}"
+for item in libmayaqua.dylib libcedar.dylib vpnclient vpncmd "${APP_NAME}"; do
     if [ -f "${APP_EXECUTABLE_DIR}/${item}" ]; then
         codesign --force --sign - "${APP_EXECUTABLE_DIR}/${item}" 2>/dev/null || true
     fi
 done
-codesign --force --deep --sign - "${APP_BUNDLE}"
+codesign --force --deep --sign - "${STAGING_BUNDLE}"
 echo "  - ✓ Code signing completed (Ad-Hoc)"
 
+# 6. 安全部署到项目根目录
+echo "  - 部署到项目目录..."
+rm -rf "${PROJECT_DIR}/${APP_BUNDLE}"
+cp -R "${STAGING_BUNDLE}" "${PROJECT_DIR}/"
+
 echo "============================================================"
-echo " ${APP_BUNDLE} Built successfully for ARM64!"
+echo " ${APP_BUNDLE} Built successfully with new AppIcon!"
+echo " Location: ${PROJECT_DIR}/${APP_BUNDLE}"
 echo "============================================================"
